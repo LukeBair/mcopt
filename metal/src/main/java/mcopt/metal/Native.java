@@ -63,6 +63,8 @@ final class Native {
 	private static final MethodHandle PROFILE_END = fn("mc_profile_end", false, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle PROFILE_READ = fn("mc_profile_read", false, null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG);
 	private static final MethodHandle PROFILE_READ_ABS = fn("mc_profile_read_abs", false, null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG);
+	private static final MethodHandle PROFILE_READ_RAW = fn("mc_profile_read_raw", false, null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT);
+	private static final MethodHandle GPU_CLOCK = fn("mc_gpu_clock", false, null, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle PROFILE_COUNT = fn("mc_profile_count", true, JAVA_INT, JAVA_LONG);
 	private static final MethodHandle DEVICE_ALLOCATED = fn("mc_device_allocated", false, JAVA_LONG, JAVA_LONG);
 	private static final MethodHandle PASS_TEST = fn("mc_pass_test", false, null, JAVA_LONG, JAVA_INT, JAVA_INT);
@@ -188,6 +190,8 @@ final class Native {
 	static long profileEnd(long enc, long countOut) { try { return (long) PROFILE_END.invokeExact(enc, countOut); } catch (Throwable t) { throw rethrow(t); } }
 	static void profileRead(long ctx, long samples, int count, long out) { try { PROFILE_READ.invokeExact(ctx, samples, count, out); } catch (Throwable t) { throw rethrow(t); } }
 	static void profileReadAbs(long ctx, long samples, int count, long out) { try { PROFILE_READ_ABS.invokeExact(ctx, samples, count, out); } catch (Throwable t) { throw rethrow(t); } }
+	static void profileReadRaw(long ctx, long samples, int count, long out, boolean release) { try { PROFILE_READ_RAW.invokeExact(ctx, samples, count, out, release ? 1 : 0); } catch (Throwable t) { throw rethrow(t); } }
+	static void gpuClock(long ctx, long out) { try { GPU_CLOCK.invokeExact(ctx, out); } catch (Throwable t) { throw rethrow(t); } }
 	static void profileLabels(long enc, long out, int stride, int max) { try { PROFILE_LABELS.invokeExact(enc, out, stride, max); } catch (Throwable t) { throw rethrow(t); } }
 	static void encCounters(long out) { try { ENC_COUNTERS.invokeExact(out); } catch (Throwable t) { throw rethrow(t); } }
 	static boolean textureResident(long ctx, long texture, int add) { try { return (int) TEXTURE_RESIDENT.invokeExact(ctx, texture, add) != 0; } catch (Throwable t) { throw rethrow(t); } }

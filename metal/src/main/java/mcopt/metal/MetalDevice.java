@@ -152,33 +152,12 @@ final class MetalDevice implements GpuDeviceBackend {
 
 	@Override
 	public GpuQueryPool createTimestampQueryPool(int size) {
-		return new GpuQueryPool() {
-			@Override
-			public int size() {
-				return size;
-			}
-
-			@Override
-			public OptionalLong getValue(int index) {
-				return OptionalLong.empty();
-			}
-
-			@Override
-			public OptionalLong[] getValues(int index, int count) {
-				OptionalLong[] values = new OptionalLong[count];
-				java.util.Arrays.fill(values, OptionalLong.empty());
-				return values;
-			}
-
-			@Override
-			public void close() {
-			}
-		};
+		return new MetalTimestamps.Pool(size);
 	}
 
 	@Override
 	public long getTimestampCalibrationOffset() {
-		return 0;
+		return MetalTimestamps.calibrationOffset(this.ctx);
 	}
 
 	@Override

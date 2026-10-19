@@ -104,6 +104,10 @@ final class MetalEncoder implements CommandEncoderBackend {
 	private long completedIndex = -1;
 	/** Render encoders opened in this submit; the trace's #numbers, which the GPU profile lines refer to. */
 	private int encoderIndex;
+	/** GPU timestamp requests of the open submit (see MetalTimestamps), and whether this submit's encoders carry sample points for them. */
+	private List<MetalTimestamps.Request> tsPending = new ArrayList<>();
+	private boolean tsSampling;
+	private long tsLastRequest = Long.MIN_VALUE / 2;
 	private @Nullable MetalRenderPass currentPass;
 	/** Recording the current submit's terrain draws for the visibility probe (-Dmcopt.metal.probe=N); null otherwise. */
 	/** Summed GPU µs over the profiled frames: whole submit, then vertex and fragment per encoder. */
@@ -172,7 +176,8 @@ final class MetalEncoder implements CommandEncoderBackend {
 		this.transientMemory.endSubmit();
 		long samples = 0;
 		int sampleCount = 0;
-		if (profiled(this.submitIndex)) {
+		boolean userProfiled = profiled(this.submitIndex);
+		if (userProfiled || this.tsSampling) {
 			try (MemoryStack stack = MemoryStack.stackPush()) {
 				long count = stack.ncalloc(4, 1, 4);
 				if (ENC_LOG) {
@@ -206,7 +211,19 @@ final class MetalEncoder implements CommandEncoderBackend {
 		} finally {
 			MetalEvents.end(commitEvent);
 		}
-		if (samples != 0) {
+		List<MetalTimestamps.Request> tsRequests = this.tsPending.isEmpty() ? null : this.tsPending;
+		if (tsRequests != null) {
+			this.tsPending = new ArrayList<>();
+			this.tsLastRequest = this.submitIndex;
+			long s = samples;
+			int n = sampleCount;
+			boolean release = !userProfiled;  // sampled for the queries alone: nobody else reads (or releases) the samples
+			this.afterThisFrame.add(() -> MetalTimestamps.resolve(this.ctx, tsRequests, s, n, release, cmd));
+		} else if (samples != 0 && !userProfiled) {
+			long s = samples;
+			this.afterThisFrame.add(() -> Native.release(s));
+		}
+		if (samples != 0 && userProfiled) {
 			long s = samples;
 			int n = sampleCount;
 			if (ENC_LOG) {
@@ -228,7 +245,12 @@ final class MetalEncoder implements CommandEncoderBackend {
 			this.encStats = new long[128][4];
 			this.encGroupOpen = -1;
 		}
-		if (profiled(this.submitIndex) && !Native.profileBegin(this.enc, 512)) System.out.println("mcopt-metal trace: no GPU timestamps on this device");
+		this.tsSampling = MetalTimestamps.ON && MetalTimestamps.sampling && !profiled(this.submitIndex) && this.submitIndex - this.tsLastRequest <= MetalTimestamps.STICKY_SUBMITS;
+		if ((profiled(this.submitIndex) || this.tsSampling) && !Native.profileBegin(this.enc, 512)) {
+			if (this.tsSampling) MetalTimestamps.sampling = false;  // no stage-boundary sampling on this GPU: command buffer times from now on
+			else System.out.println("mcopt-metal trace: no GPU timestamps on this device");
+			this.tsSampling = false;
+		}
 		if (this.passTestPending) {
 			Native.passTest(this.enc, PASS_TEST_N, PASS_TEST_MODE);
 			this.passTestPending = false;
@@ -725,6 +747,16 @@ final class MetalEncoder implements CommandEncoderBackend {
 
 	@Override
 	public void writeTimestamp(GpuQueryPool pool, int index) {
+		this.timestamp(pool, index, false);
+	}
+
+	/** Records a query write at the current point of the submit; inPass: from inside the open render pass, whose own samples are already allocated. */
+	void timestamp(GpuQueryPool pool, int index, boolean inPass) {
+		if (!MetalTimestamps.ON || !(pool instanceof MetalTimestamps.Pool p)) return;
+		int count = this.tsSampling ? Native.profileCount(this.enc) : -1;
+		p.invalidate(index);  // a reused slot must not read as resolved until this write is
+		this.tsPending.add(new MetalTimestamps.Request(p, index, count < 0 ? -1 : count / 4, inPass));
+		this.tsLastRequest = this.submitIndex;
 	}
 
 	/** -Dmcopt.metal.presentQueue=acquire: this frame's image goes to a staging slot; the present side acquires the drawable and presents it. */

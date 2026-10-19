@@ -307,5 +307,6 @@ final class MetalRenderPass implements RenderPassBackend {
 
 	@Override
 	public void writeTimestamp(GpuQueryPool pool, int index) {
+		this.encoder.timestamp(pool, index, true);
 	}
 }

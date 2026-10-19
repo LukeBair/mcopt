@@ -1083,6 +1083,24 @@ void mc_profile_read_abs(Ctx *ctx, id<MTLCounterSampleBuffer> s, int count, doub
 	[s release];
 }
 
+// GPU timestamps for vanilla's query pools (MetalTimestamps.java): the raw counter values of a sampled submit, untouched; release != 0
+// also releases s (when no other reader of the same samples follows).
+void mc_profile_read_raw(Ctx *ctx, id<MTLCounterSampleBuffer> s, int count, uint64_t *out, int release) {
+	@autoreleasepool {
+		const MTLCounterResultTimestamp *ts = [s resolveCounterRange:NSMakeRange(0, count)].bytes;
+		for (int i = 0; i < count; i++) out[i] = ts[i].timestamp == MTLCounterErrorValue ? 0 : ts[i].timestamp;
+	}
+	if (release) [s release];
+}
+
+// out[0] = the GPU's timestamp counter now, out[1] = the host's uptime clock in ns at the same moment (the clock System.nanoTime reads).
+void mc_gpu_clock(Ctx *ctx, uint64_t *out) {
+	MTLTimestamp cpu, gpu;
+	[ctx->device sampleTimestamps:&cpu gpuTimestamp:&gpu];
+	out[0] = gpu;
+	out[1] = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+}
+
 // Metal memory the device has allocated (bytes): -Dmcopt.metal.atlasDouble logs it around making the second atlas copy.
 uint64_t mc_device_allocated(Ctx *ctx) { return ctx->device.currentAllocatedSize; }
 
