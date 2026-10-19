@@ -89,7 +89,7 @@ final class MetalPipeline implements BackendRenderPipeline {
 	private static long compiled, translateNs, libraryNs, stateNs;
 
 	static synchronized Map<String, Object> compileStats() {
-		return Map.of("count", compiled, "translateMs", translateNs / 1e6, "libraryMs", libraryNs / 1e6, "stateMs", stateNs / 1e6, "mslCacheHits", mslHits, "mslCacheMismatches", mslMismatches);
+		return Map.of("count", compiled, "translateMs", translateNs / 1e6, "libraryMs", libraryNs / 1e6, "stateMs", stateNs / 1e6, "mslCacheHits", mslHits, "mslCacheMismatches", mslMismatches, "psoHits", MetalPsoCache.stats()[0], "psoMisses", MetalPsoCache.stats()[1]);
 	}
 
 	static @Nullable MetalPipeline compile(MetalEncoder encoder, CreateInfo info) {
@@ -140,6 +140,7 @@ final class MetalPipeline implements BackendRenderPipeline {
 			if (vlib != 0) Native.release(vlib);
 			if (flib != 0) Native.release(flib);
 			long t3 = System.nanoTime();
+			MetalPsoCache.compiled();
 			synchronized (MetalPipeline.class) {
 				compiled++;
 				translateNs += t1 - t0;
@@ -245,7 +246,7 @@ final class MetalPipeline implements BackendRenderPipeline {
 	private static String mslSalt() {
 		try (java.io.InputStream in = MetalPipeline.class.getResourceAsStream("MetalPipeline.class")) {
 			byte[] code = in.readAllBytes();
-			return "mcopt-msl-1|" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(code))
+			return "mcopt-msl-2|" + MetalConst.PUSH_CONSTANTS_INDEX + "|" + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(code))
 				+ "|" + org.lwjgl.Version.getVersion();
 		} catch (Exception e) {
 			throw new IllegalStateException("mslCache salt", e);
@@ -271,21 +272,23 @@ final class MetalPipeline implements BackendRenderPipeline {
 		try {
 			String text = java.nio.file.Files.readString(file);
 			int nl = text.indexOf('\n');
-			if (nl > 0) {
+			int bar = nl > 0 ? text.lastIndexOf('|', nl) : -1;
+			// "entry|length\n" then the source: a truncated or damaged file fails the length check and is translated again
+			if (bar > 0 && Integer.parseInt(text.substring(bar + 1, nl)) == text.length() - nl - 1) {
 				mslHits++;
-				Translated hit = new Translated(text.substring(nl + 1), text.substring(0, nl));
+				Translated hit = new Translated(text.substring(nl + 1), text.substring(0, bar));
 				if (MSL_MODE.equals("verify") && !hit.equals(translateNow(module, uniformCount, points))) mslMismatches++;
 				return hit;
 			}
-		} catch (java.io.IOException missing) {
-			// not cached yet
+		} catch (java.io.IOException | RuntimeException missing) {
+			// not cached yet, or unreadable
 		}
 		Translated t = translateNow(module, uniformCount, points);
 		mslMisses++;
 		try {
 			java.nio.file.Files.createDirectories(MSL_DIR);
 			java.nio.file.Path tmp = java.nio.file.Files.createTempFile(MSL_DIR, key, ".tmp");
-			java.nio.file.Files.writeString(tmp, t.entry + "\n" + t.msl);
+			java.nio.file.Files.writeString(tmp, t.entry + "|" + t.msl.length() + "\n" + t.msl);
 			java.nio.file.Files.move(tmp, file, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 		} catch (java.io.IOException e) {
 			// a cache that can't be written is just a slower launch

@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 #define FAN_PRIMITIVE 5
@@ -377,6 +378,63 @@ id<MTLLibrary> mc_library_new(Ctx *ctx, const char *source, char *err, int errCa
  *   [.] depthPixelFormat (0 = none)
  *   [.] topologyClass (MTLPrimitiveTopologyClass)
  */
+// ---- opt-in compiled-pipeline cache (-Dmcopt.startup.psoCache): an MTLBinaryArchive of render pipeline states ----
+
+static id<MTLBinaryArchive> psoArchive;
+static os_unfair_lock psoLock = OS_UNFAIR_LOCK_INIT;
+static int psoDirty, psoHits, psoMisses;
+
+// Opens (or starts) the archive at path. Returns 1 when an existing file loaded, 0 when it starts empty (missing, corrupt or rejected by Metal), -1 unsupported.
+int mc_pso_open(Ctx *ctx, const char *path) {
+	@autoreleasepool {
+		if (![ctx->device respondsToSelector:@selector(newBinaryArchiveWithDescriptor:error:)]) return -1;
+		NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+		int loaded = 0;
+		MTLBinaryArchiveDescriptor *d = [[MTLBinaryArchiveDescriptor new] autorelease];
+		if ([[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
+			d.url = url;
+			NSError *e = nil;
+			psoArchive = [ctx->device newBinaryArchiveWithDescriptor:d error:&e];
+			loaded = psoArchive != nil;
+			if (!psoArchive) [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
+		}
+		if (!psoArchive) {
+			d.url = nil;
+			NSError *e = nil;
+			psoArchive = [ctx->device newBinaryArchiveWithDescriptor:d error:&e];
+			if (!psoArchive) return -1;
+		}
+		return loaded;
+	}
+}
+
+void mc_pso_stats(int *out) { out[0] = psoHits; out[1] = psoMisses; out[2] = psoDirty; }
+
+// Writes the archive to path atomically if anything was added since the last save. Returns 1 saved, 0 nothing to do, -1 failed.
+int mc_pso_save(const char *path) {
+	if (!psoArchive) return 0;
+	@autoreleasepool {
+		os_unfair_lock_lock(&psoLock);
+		int dirty = psoDirty;
+		os_unfair_lock_unlock(&psoLock);
+		if (!dirty) return 0;
+		NSString *tmp = [[NSString stringWithUTF8String:path] stringByAppendingString:@".tmp"];
+		NSError *e = nil;
+		os_unfair_lock_lock(&psoLock);
+		BOOL ok = [psoArchive serializeToURL:[NSURL fileURLWithPath:tmp] error:&e];
+		if (ok) psoDirty = 0;
+		os_unfair_lock_unlock(&psoLock);
+		if (ok) ok = rename(tmp.UTF8String, path) == 0;
+		if (!ok) [[NSFileManager defaultManager] removeItemAtPath:tmp error:nil];
+		return ok ? 1 : -1;
+	}
+}
+
+void mc_os_build(char *out, int cap) {
+	size_t n = (size_t) cap;
+	if (sysctlbyname("kern.osversion", out, &n, NULL, 0) != 0) out[0] = 0;
+}
+
 id<MTLRenderPipelineState> mc_pipeline_new(Ctx *ctx, id<MTLLibrary> vlib, const char *vname, id<MTLLibrary> flib, const char *fname,
 	const int *desc, char *err, int errCap) {
 	@autoreleasepool {
@@ -422,7 +480,23 @@ id<MTLRenderPipelineState> mc_pipeline_new(Ctx *ctx, id<MTLLibrary> vlib, const 
 		pd.depthAttachmentPixelFormat = (MTLPixelFormat) desc[i++];
 		pd.inputPrimitiveTopology = (MTLPrimitiveTopologyClass) desc[i++];
 		NSError *e = nil;
-		id<MTLRenderPipelineState> pso = [ctx->device newRenderPipelineStateWithDescriptor:pd error:&e];
+		id<MTLRenderPipelineState> pso = nil;
+		if (psoArchive) {
+			pd.binaryArchives = @[psoArchive];
+			os_unfair_lock_lock(&psoLock);  // (the archive is not safe to read while mc_pso_save serializes it)
+			pso = [ctx->device newRenderPipelineStateWithDescriptor:pd options:MTLPipelineOptionFailOnBinaryArchiveMiss reflection:nil error:&e];
+			if (pso) psoHits++; else psoMisses++;
+			os_unfair_lock_unlock(&psoLock);
+			e = nil;
+		}
+		if (!pso) {
+			pso = [ctx->device newRenderPipelineStateWithDescriptor:pd error:&e];
+			if (pso && psoArchive) {
+				os_unfair_lock_lock(&psoLock);
+				if ([psoArchive addRenderPipelineFunctionsWithDescriptor:pd error:nil]) psoDirty++;
+				os_unfair_lock_unlock(&psoLock);
+			}
+		}
 		if (!pso) copyError(e, err, errCap);
 		return pso;
 	}

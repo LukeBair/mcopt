@@ -48,6 +48,10 @@ final class MetalDevice implements GpuDeviceBackend {
 				new HintsAndWorkarounds(false, false, true, false),
 				DeviceType.INTEGRATED);
 		}
+		MetalPsoCache.open(this.ctx, this.info.name());
+		// -Dmcopt.startup.report=true (measurement only): the pipeline creation time by step, on exit.
+		if (Boolean.getBoolean("mcopt.startup.report")) Runtime.getRuntime().addShutdownHook(new Thread(() -> System.out.println("mcopt-metal startup: " + MetalPipeline.compileStats()
+			+ " jvmUptimeMs=" + java.lang.management.ManagementFactory.getRuntimeMXBean().getUptime())));
 		this.encoder = new MetalEncoder(this.ctx);
 		// -Dmcopt.metal.cbdiag=MS: stall diagnostics on stderr (big buffer allocations, slow command buffers); see mcmetal.m.
 		String diag = System.getProperty("mcopt.metal.cbdiag");
