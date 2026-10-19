@@ -18,6 +18,7 @@ public final class CpuMixinPlugin implements IMixinConfigPlugin {
 	@Override public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
 		String name = mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1);
 		if (name.startsWith("AbFrame")) return Cpu.AB_SHOTS || Cpu.PASS_AB || Cpu.LEASH_AB || Cpu.MODEL_AB || mcopt.metal.cpu.EntityBox.AB;
+		if (name.startsWith("Scene")) return mcopt.metal.cpu.Scene.ON;
 		if (name.startsWith("Leash")) return Cpu.LEASH;
 		if (name.startsWith("Model")) return Cpu.MODEL;
 		if (name.startsWith("EntityBox") || name.startsWith("EntityRendererBox")) return mcopt.metal.cpu.EntityBox.ON;
