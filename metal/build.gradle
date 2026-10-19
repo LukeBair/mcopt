@@ -45,3 +45,14 @@ tasks.withType(JavaCompile).configureEach {
 	// --add-modules jdk.incubator.vector
 	if (it.name == 'compileJava') it.options.compilerArgs += ['--add-modules', 'jdk.incubator.vector']
 }
+
+// Test clients (./gradlew :metal:runClient): -PmcoptLabel="who: what" sets -Dmcopt.dev.label (window title and a chat line say
+// which agent or person launched this instance and what it tests); -PmcoptArgs="-Dmcopt.x=y -Dmcopt.z=w" adds JVM arguments.
+loom {
+	runs {
+		client {
+			if (project.hasProperty('mcoptLabel')) vmArg "-Dmcopt.dev.label=${project.property('mcoptLabel')}"
+			if (project.hasProperty('mcoptArgs')) project.property('mcoptArgs').toString().trim().split(/\s+/).each { vmArg it }
+		}
+	}
+}
