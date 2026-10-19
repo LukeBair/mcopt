@@ -34,7 +34,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public interface EntityGetterMixin {
 	@Inject(method = "getEntityCollisions", at = @At("HEAD"), cancellable = true)
 	default void mcopt$collisions(@Nullable Entity source, AABB testArea, CallbackInfoReturnable<List<VoxelShape>> cir) {
-		if (!((Object) this instanceof Level level) || testArea.getSize() < 1.0E-7) return;
+		if (!ServerOpt.active() || !((Object) this instanceof Level level) || testArea.getSize() < 1.0E-7) return;
 		if (source != null && !CollidableSource.defaultSource(source.getClass())) return;
 		if (!(((LevelEntitiesAccessor) level).mcopt$entities() instanceof CollidableSource.Getter getter)) return;
 		Predicate<Entity> canCollide = source == null ? EntitySelector.CAN_BE_COLLIDED_WITH : EntitySelector.NO_SPECTATORS.and(source::canCollideWith);

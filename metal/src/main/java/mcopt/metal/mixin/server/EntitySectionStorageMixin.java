@@ -33,6 +33,7 @@ abstract class EntitySectionStorageMixin<T extends EntityAccess> {
 
 	@Inject(method = "forEachAccessibleNonEmptySection", at = @At("HEAD"), cancellable = true)
 	private void mcopt$direct(AABB bb, AbortableIterationConsumer<EntitySection<T>> output, CallbackInfo ci) {
+		if (!ServerOpt.active()) return;
 		int xMin = SectionPos.posToSectionCoord(bb.minX - 2.0);
 		int yMin = SectionPos.posToSectionCoord(bb.minY - 4.0);
 		int zMin = SectionPos.posToSectionCoord(bb.minZ - 2.0);

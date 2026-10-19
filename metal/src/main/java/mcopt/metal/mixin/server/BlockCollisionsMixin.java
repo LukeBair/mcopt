@@ -75,6 +75,7 @@ abstract class BlockCollisionsMixin<T> extends com.google.common.collect.Abstrac
 	 */
 	@Overwrite
 	protected T computeNext() {
+		if (!ServerOpt.active()) return mcopt$vanilla();
 		final boolean verify = ServerOpt.COLLIDE_VERIFY;
 		final int w = mcopt$w, h = mcopt$h, d = mcopt$d;
 		while (mcopt$index < mcopt$end) {
@@ -137,6 +138,39 @@ abstract class BlockCollisionsMixin<T> extends com.google.common.collect.Abstrac
 					VoxelShape shape = blockShape.move(this.pos);
 					if (!shape.isEmpty() && Shapes.joinIsNotEmpty(shape, this.entityShape, BooleanOp.AND)) {
 						return this.resultProvider.apply(this.pos, shape);
+					}
+				}
+			}
+		}
+		return this.endOfData();
+	}
+
+	@Unique
+	private T mcopt$vanilla() {
+		while (this.cursor.advance()) {
+			int x = this.cursor.nextX();
+			int y = this.cursor.nextY();
+			int z = this.cursor.nextZ();
+			int cursorFaceType = this.cursor.getNextType();
+			if (cursorFaceType != 3) {
+				BlockGetter chunk = this.getChunk(x, z);
+				if (chunk != null) {
+					this.pos.set(x, y, z);
+					BlockState blockState = chunk.getBlockState(this.pos);
+					if ((!this.onlySuffocatingBlocks || blockState.isSuffocating(chunk, this.pos))
+						&& (cursorFaceType != 1 || blockState.hasLargeCollisionShape())
+						&& (cursorFaceType != 2 || blockState.is(Blocks.MOVING_PISTON))) {
+						VoxelShape blockShape = this.context.getCollisionShape(blockState, this.collisionGetter, this.pos);
+						if (blockShape == Shapes.block()) {
+							if (this.box.intersects(x, y, z, x + 1.0, y + 1.0, z + 1.0)) {
+								return this.resultProvider.apply(this.pos, blockShape.move(this.pos));
+							}
+						} else {
+							VoxelShape shape = blockShape.move(this.pos);
+							if (!shape.isEmpty() && Shapes.joinIsNotEmpty(shape, this.entityShape, BooleanOp.AND)) {
+								return this.resultProvider.apply(this.pos, shape);
+							}
+						}
 					}
 				}
 			}

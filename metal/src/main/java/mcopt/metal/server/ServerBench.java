@@ -15,6 +15,8 @@ public final class ServerBench {
 	private static final int BUILD_AT = 120, WARMUP = 150, MEASURE = Integer.getInteger("mcopt.server.benchTicks", 1000);
 	private static int tick;
 	private static long t0, c0, cpuSum;
+	private static final double[] phaseCpu = new double[2];
+	private static final int[] phaseN = new int[2];
 	private static final java.lang.management.ThreadMXBean TMX = java.lang.management.ManagementFactory.getThreadMXBean();
 	private static final long[] samples = new long[MEASURE];
 	private static int n;
@@ -75,7 +77,14 @@ public final class ServerBench {
 
 	public static void end(MinecraftServer server) {
 		if (tick <= BUILD_AT + WARMUP) return;
-		cpuSum += TMX.getCurrentThreadCpuTime() - c0;
+		long cpu = TMX.getCurrentThreadCpuTime() - c0;
+		cpuSum += cpu;
+		if (ServerOpt.TOGGLE) {
+			int ph = ServerOpt.phaseOn ? 0 : 1;
+			phaseCpu[ph] += cpu;
+			phaseN[ph]++;
+			if ((n + 1) % 100 == 0) ServerOpt.phaseOn = !ServerOpt.phaseOn;
+		}
 		samples[n++] = System.nanoTime() - t0;
 		if (n == MEASURE) {
 			long[] s = samples.clone();
@@ -86,6 +95,10 @@ public final class ServerBench {
 			for (var level : server.getAllLevels()) for (var e : level.getAllEntities()) entities++;
 			System.out.printf("mcopt-bench: RESULT cpu=%.2f mean=%.2f median=%.2f p95=%.2f p99=%.2f max=%.2f ms over %d ticks, %d entities%n",
 				cpuSum / (double) MEASURE / 1e6, sum / MEASURE / 1e6, s[MEASURE / 2] / 1e6, s[MEASURE * 95 / 100] / 1e6, s[MEASURE * 99 / 100] / 1e6, s[MEASURE - 1] / 1e6, MEASURE, entities);
+			if (ServerOpt.TOGGLE) {
+				System.out.printf("mcopt-bench: TOGGLE cpu on=%.3f ms (%d ticks) off=%.3f ms (%d ticks) delta=%.1f%%%n", phaseCpu[0] / phaseN[0] / 1e6, phaseN[0],
+					phaseCpu[1] / phaseN[1] / 1e6, phaseN[1], 100.0 * (phaseCpu[0] / phaseN[0] - phaseCpu[1] / phaseN[1]) / (phaseCpu[1] / phaseN[1]));
+			}
 			System.out.flush();
 			new Thread(() -> System.exit(0), "mcopt-bench exit").start();
 		}

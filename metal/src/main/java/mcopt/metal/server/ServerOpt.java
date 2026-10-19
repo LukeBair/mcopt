@@ -16,6 +16,15 @@ public final class ServerOpt {
 
 	public static final int BENCH = Integer.getInteger("mcopt.server.bench", 0);
 
+	/** -Dmcopt.server.benchToggle=true: the bench flips the enabled switches on and off every 100 ticks (paired A/B inside one run). */
+	public static final boolean TOGGLE = Boolean.getBoolean("mcopt.server.benchToggle");
+	public static volatile boolean phaseOn = true;
+
+	/** False only during the off phases of a toggling bench. */
+	public static boolean active() {
+		return !TOGGLE || phaseOn;
+	}
+
 	public static final boolean COLLIDE_VERIFY = "verify".equals(prop("collide"));
 	public static final boolean COLLIDE = "true".equals(prop("collide")) || COLLIDE_VERIFY;
 	public static final boolean COLLIDE_INDEX_VERIFY = "verify".equals(prop("collideIndex"));
@@ -46,7 +55,7 @@ public final class ServerOpt {
 			case "ServerBenchMixin" -> BENCH > 0;
 			case "BlockCollisionsMixin" -> COLLIDE;
 			case "EntityGetterMixin", "EntitySectionMixin", "LevelEntityGetterAdapterMixin", "LevelEntitiesAccessor" -> COLLIDE_INDEX;
-			case "EntitySectionStorageMixin" -> ENTITY_INDEX;
+			case "EntitySectionStorageMixin", "EntitySectionScanMixin", "ClassInstanceMultiMapAccessor" -> ENTITY_INDEX;
 			default -> false;
 		};
 	}
