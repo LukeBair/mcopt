@@ -90,3 +90,30 @@ backbone, starting with a loader that runs only a pack's `composite*` and `final
 Source: `metal/src/main/java/mcopt/metal/shade`, shaders in
 `metal/src/main/resources/assets/mcopt/shaders/post/` (vanilla resolves shader ids through the resource system, so they
 must live under `assets/<namespace>/shaders/`).
+
+## Status (stage 1 verified)
+
+Bug found and fixed: vanilla clears the main depth buffer in `GameRenderer.render3dHud` (before the first-person hand), so by
+the tail of `applyPostEffects` the depth held only the hand and every terrain pixel read as sky (debug=1 was flat green,
+no shadows/AO). `ShadeDepth` now copies the level depth (`copyTextureToTexture` into its own D32 texture) at the head of
+`render3dHud`, and `ShadePass` samples that copy. The shadow map will use the same copy. Checked with debug=1: floors
+green, walls pink/blue; debug=3 AO shows on trees and leaves; on vs. off shows subtle AO and grade.
+
+Self-test (one launch, all views, camera frozen): `-Dmcopt.shade=true -Dmcopt.shade.shot=100 -Dmcopt.shade.shotName=NAME
+-Dmcopt.shade.shotSeq=off,on,d1,d2,d3 -Dmcopt.shade.shotDelay=25` writes `run/screenshots/NAME_<step>.png`;
+`shotYaw`/`shotPitch` set the frozen camera.
+
+Known: translucent water and clouds-over-water write no depth, so water gets no AO/shadow and reads as sky in debug=1.
+The test world's spawn is at noon (sunAngle 0), so contact shadows fall straight down; use a different time to judge
+shadow side.
+
+## Next steps (not done)
+
+1. Sun shadow map. `own/OwnTerrain` (~3200 lines) and `terrain.metal` (~3500 lines) have many cull variants (own_cull,
+   frag_cull*, occlusion, a1/a2 split). Plan: a separate `OwnShadow` class that reuses the arena buffers and section
+   tables, runs the simple `own_cull` (with a sun-frustum `CullFrame`, no occlusion) and `own_finish`, then one indirect
+   draw with a new `own_shadow_vs` (depth only, orthographic sun matrix texel-snapped to the shadow texel size,
+   ~128 block radius, one cascade first) and an alpha-tested `own_shadow_fs` for cutout. Needs the vertex pulling
+   code from `terrain.metal` factored into a shared function; keep that edit additive.
+2. Sample it in `shade.fsh` (PCF, normal-offset bias), keep contact shadows for detail; sun/moon colour by time of day.
+3. G-buffer redirect (PassRedirector/PassDelegate), water, bloom.
