@@ -20,6 +20,7 @@ public final class StartupMixinPlugin implements IMixinConfigPlugin {
 		if (mixinClassName.endsWith("CrashPreloadMixin")) return "async".equals(System.getProperty("mcopt.startup.crashPreload"));
 		if (mixinClassName.endsWith("BlockCacheMixin") || mixinClassName.endsWith("BootstrapCacheMixin")) return !System.getProperty("mcopt.startup.blockCache", "").isEmpty();
 		if (mixinClassName.endsWith("FadeMixin")) return System.getProperty("mcopt.startup.fadeMs") != null;
+		if (mixinClassName.endsWith("DevLabelMixin")) return System.getProperty("mcopt.dev.label") != null;
 		return false;
 	}
 	@Override public void acceptTargets(Set<String> myTargets, Set<String> otherTargets) { }
