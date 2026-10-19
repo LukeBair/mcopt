@@ -25,6 +25,12 @@ import net.minecraft.world.level.levelgen.presets.WorldPresets;
  */
 public final class Scene {
 	public static final boolean ON = Boolean.getBoolean("mcopt.cpu.scene");
+	/** -Dmcopt.cpu.sceneShots=cull: four frames (lever off, on, off, on) grabbed once the scene has settled: screenshots/scene-*.png. */
+	public static final String SHOTS_WHAT = System.getProperty("mcopt.cpu.sceneShots", "");
+	public static final boolean SHOTS = !SHOTS_WHAT.isEmpty();
+	private static final String[] NAMES = {"scene-off1.png", "scene-on1.png", "scene-off2.png", "scene-on2.png"};
+	private static int shotFrames, shotStep = -1;
+	private static final boolean FIRE = Boolean.getBoolean("mcopt.cpu.sceneFire");
 	private static boolean creating;
 	private static int ticksInWorld, waitTitle;
 	private static boolean built;
@@ -43,8 +49,9 @@ public final class Scene {
 			return;
 		}
 		MinecraftServer srv = mc.getSingleplayerServer();
-		if (srv == null || mc.player == null || built) return;
-		if (++ticksInWorld == 200) {
+		if (srv == null || mc.player == null) return;
+		ticksInWorld++;
+		if (!built && ticksInWorld == 200) {
 			built = true;
 			srv.execute(() -> build(srv));
 		}
@@ -94,7 +101,7 @@ public final class Scene {
 				c.add("setblock " + x + " " + y + " 18 red_bed[facing=south,part=foot]");
 				c.add("setblock " + x + " " + y + " 19 red_bed[facing=south,part=head]");
 				c.add("setblock " + x + " " + y + " 21 enchanting_table");
-				c.add("setblock " + x + " " + y + " 4 campfire");
+				if (FIRE) c.add("setblock " + x + " " + y + " 4 campfire");
 			}
 		}
 		c.add("fill -25 -60 30 25 -57 30 stone");
@@ -111,7 +118,30 @@ public final class Scene {
 		}
 		for (String s : c) run(srv, src, s);
 		run(srv, src, "gamemode spectator @a");
+		run(srv, src, "tick freeze");
 		run(srv, src, "tp @a 0.5 -55 -3 0 22");
 		System.out.println("mcopt-scene: built, " + ok + " commands ok, " + failed + " failed");
+	}
+
+	private static void lever(boolean on) {
+		if (SHOTS_WHAT.equals("cull")) Cull.active = on;
+	}
+
+	/** Frame start (AbFrameMixin): sets the lever for the frame being grabbed. */
+	public static void frameStart() {
+		if (!SHOTS || !built || ticksInWorld < 400) return;
+		shotFrames++;
+		shotStep = shotFrames >= 20 && shotFrames < 24 ? shotFrames - 20 : -1;
+		if (shotStep >= 0) lever(shotStep % 2 == 1);
+	}
+
+	/** Frame end (AbFrameMixin): grabs the frame this step drew. */
+	public static void frameEnd() {
+		if (shotStep < 0) return;
+		Minecraft mc = Minecraft.getInstance();
+		net.minecraft.client.Screenshot.grab(mc.gameDirectory, NAMES[shotStep], mc.gameRenderer.mainRenderTarget(), 1, message -> { });
+		System.out.println("mcopt-scene: grabbed " + NAMES[shotStep]);
+		if (shotStep == 3) lever(true);
+		shotStep = -1;
 	}
 }

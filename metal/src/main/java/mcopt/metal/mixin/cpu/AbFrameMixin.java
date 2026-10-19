@@ -14,10 +14,12 @@ abstract class AbFrameMixin {
 	private void mcopt$frame(CallbackInfo ci) {
 		Ab.frame++;
 		if (mcopt.metal.cpu.Cpu.AB_SHOTS) mcopt.metal.cpu.AbShots.frameStart();
+		if (mcopt.metal.cpu.Scene.SHOTS) mcopt.metal.cpu.Scene.frameStart();
 	}
 
 	@Inject(method = "render", at = @At("RETURN"))
 	private void mcopt$frameEnd(CallbackInfo ci) {
 		if (mcopt.metal.cpu.Cpu.AB_SHOTS) mcopt.metal.cpu.AbShots.frameEnd();
+		if (mcopt.metal.cpu.Scene.SHOTS) mcopt.metal.cpu.Scene.frameEnd();
 	}
 }
