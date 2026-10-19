@@ -1,0 +1,12 @@
+{
+	"required": true,
+	"package": "mcopt.metal.mixin.server",
+	"plugin": "mcopt.metal.mixin.server.ServerMixinPlugin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"ServerBenchMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}
