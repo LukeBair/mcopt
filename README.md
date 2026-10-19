@@ -34,6 +34,7 @@ Shows an fps counter in the top-left corner (hidden with F1 or F3; fn + F1 or fn
 - `profile=none` in `~/Library/Application Support/minecraft/config/mcopt.properties` (in Prism, the instance's
   `minecraft/config` folder) turns it off. The first launch writes that file.
 - Far terrain is an experimental opt-in: `mcopt.lod=true` in the same file, for Macs with 10 or more GPU cores.
+- Every other switch, and what the default profile sets it to: [FLAGS.md](FLAGS.md) (regenerate with `python3 tools/flags.py`).
 
 ## Numbers
 
