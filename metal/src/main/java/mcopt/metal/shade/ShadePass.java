@@ -16,6 +16,7 @@ import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.pipeline.UniformType;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import java.nio.ByteBuffer;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -32,7 +33,7 @@ import org.lwjgl.system.MemoryStack;
  * finished level image into a scratch target, and a copy back. Runs from GameRenderer.applyPostEffects' tail.
  */
 public final class ShadePass {
-	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().get();
+	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().get();
 	private static RenderPipeline shade;
 	private static RenderPipeline blit;
 	private static GpuBuffer ubo;
@@ -45,6 +46,7 @@ public final class ShadePass {
 		BindGroupLayout inputs = BindGroupLayout.builder()
 			.withUniform("ColorSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+			.withUniform("ShadowSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("ShadeInfo", UniformType.UNIFORM_BUFFER)
 			.build();
 		BindGroupLayout blitInputs = BindGroupLayout.builder().withUniform("ColorSampler", UniformType.COMBINED_IMAGE_SAMPLER).build();
@@ -87,15 +89,20 @@ public final class ShadePass {
 		// Direction to the sun in world space (SkyRenderer: Y -90, X sunAngle on +Y), then into view space.
 		Vector3f sun = new Vector3f((float) -Math.sin(sky.sunAngle), (float) Math.cos(sky.sunAngle), 0f);
 		if (Shade.SHOT > 0 && !logged) { logged = true; System.out.println("[mcopt] shade: sunAngle " + sky.sunAngle + " rain " + rain); }
+		ShadeShadow.sunAngle = sky.sunAngle;
 		float day = smooth(-0.04f, 0.28f, sun.y) * (1f - rain);
 		camera.viewRotationMatrix.transformDirection(sun);
 
+		GpuTextureView shadowView = ShadeShadow.view();
+		Matrix4f shadowM = new Matrix4f(ShadeShadow.CLIP).mul(camera.viewRotationMatrix.invert(new Matrix4f()));
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			ByteBuffer data = Std140Builder.onStack(stack, UBO_SIZE)
 				.putMat4f(proj).putMat4f(inv)
 				.putVec4(sun.x, sun.y, sun.z, day)
 				.putVec4(Shade.SHADOW, Shade.AO, Shade.GRADE, Shade.SHADOW_LEN)
 				.putVec4(Shade.debugNow, Shade.AO_RADIUS, 1f / main.width, 1f / main.height)
+				.putMat4f(shadowM)
+				.putVec4(2f * Shade.MAP_RADIUS / Shade.MAP_RES, 1f / Shade.MAP_RES, shadowView != null ? 1f : 0f, ShadeShadow.RANGE)
 				.get();
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), data);
 		}
@@ -112,6 +119,7 @@ public final class ShadePass {
 				pass.setUniform("ShadeInfo", ubo);
 				pass.setUniform("ColorSampler", main.getColorTextureView(), nearest);
 				pass.setUniform("DepthSampler", ShadeDepth.view(), nearest);
+				pass.setUniform("ShadowSampler", shadowView != null ? shadowView : ShadeDepth.view(), nearest);
 				pass.draw(3, 1, 0, 0);
 			}
 			try (RenderPass pass = enc.createRenderPass(() -> "mcopt shade resolve", main.getColorTextureView(), Optional.empty(), null, OptionalDouble.empty())) {

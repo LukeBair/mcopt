@@ -6,6 +6,7 @@
 
 uniform sampler2D ColorSampler;
 uniform sampler2D DepthSampler;
+uniform sampler2D ShadowSampler;
 
 layout(std140) uniform ShadeInfo {
     mat4 Proj;
@@ -13,6 +14,8 @@ layout(std140) uniform ShadeInfo {
     vec4 Sun;      // xyz: direction to the sun in view space, w: daylight 0..1
     vec4 Params0;  // x shadow strength, y ao strength, z grade amount, w shadow length (blocks)
     vec4 Params1;  // x debug mode, y ao radius (blocks), z texel width, w texel height
+    mat4 ShadowM;  // view space -> sun shadow map clip (reverse-Z depth)
+    vec4 ShadowP;  // x map texel (blocks), y 1/resolution, z map valid, w depth range (blocks)
 };
 
 layout(location = 0) in vec2 texCoord;
@@ -46,6 +49,34 @@ vec3 tonemap(vec3 c, float amount) {
     return clamp(c, 0.0, 1.0);
 }
 
+// Sun shadow map lookup: PCF over a rotated Vogel disc, normal-offset and slope-scaled bias. Returns 0 lit .. 1 shadowed, and in
+// edge how far inside the map the point is (1 inside, 0 at its border) so the caller can fade into the screen-space fallback.
+float mapShadow(vec3 p, vec3 n, vec3 L, float jitter, out float edge) {
+    float cosT = clamp(dot(n, L), 0.05, 1.0);
+    float tanT = sqrt(1.0 - cosT * cosT) / cosT;
+    float texel = ShadowP.x;
+    // Normal offset grows with the slope, so grazing surfaces do not self-shadow.
+    vec3 q = p + n * texel * (1.0 + 1.5 * min(tanT, 4.0)) * 1.4;
+    vec4 c = ShadowM * vec4(q, 1.0);
+    vec3 s = c.xyz / c.w;
+    vec2 uv = s.xy * 0.5 + 0.5;
+    edge = 1.0 - smoothstep(0.82, 0.98, max(abs(s.x), abs(s.y)));
+    if (edge <= 0.0 || s.z <= 0.0 || s.z >= 1.0) { edge = 0.0; return 0.0; }
+    float bias = (texel * (0.6 + 1.0 * min(tanT, 4.0))) / ShadowP.w;
+    float radius = ShadowP.y * 2.2;
+    float acc = 0.0;
+    const int N = 16;
+    float rot = jitter * 6.2831853;
+    for (int i = 0; i < N; i++) {
+        float r = sqrt((float(i) + 0.5) / float(N));
+        float a = rot + float(i) * 2.399963;
+        vec2 o = vec2(cos(a), sin(a)) * r * radius;
+        float m = textureLod(ShadowSampler, uv + o, 0.0).r;
+        acc += (m > s.z + bias) ? 1.0 : 0.0;
+    }
+    return acc / float(N);
+}
+
 void main() {
     vec4 src = texture(ColorSampler, texCoord);
     vec3 col = src.rgb;
@@ -74,13 +105,18 @@ void main() {
         float dist = length(p);
         float jitter = hash12(gl_FragCoord.xy);
 
-        // Contact shadow: march toward the sun in view space, compare with the depth buffer.
+        // Shadow: the sun map where it covers, with the screen-space march kept as fine contact detail (and as the fallback outside it).
         float day = Sun.w;
         if (Params0.x > 0.0 && day > 0.0) {
-            float len = Params0.w;
+            vec3 L = normalize(Sun.xyz);
+            float facing = smoothstep(-0.1, 0.35, dot(n, L));
+            float edge = 0.0;
+            float mapS = 0.0;
+            bool useMap = ShadowP.z > 0.5;
+            if (useMap) mapS = mapShadow(p, n, L, jitter, edge);
+            float len = useMap ? min(Params0.w, 3.0) : Params0.w;
             const int STEPS = 20;
             float stepLen = len / float(STEPS);
-            vec3 L = normalize(Sun.xyz);
             vec3 o = p + n * (0.02 + dist * 0.0015);
             float hit = 0.0;
             for (int i = 0; i < STEPS; i++) {
@@ -99,10 +135,9 @@ void main() {
                 float thick = 0.25 + t * 0.35;
                 if (diff > 0.03 && diff < thick) { hit = 1.0; break; }
             }
-            // Fade shadows out toward the far side of the view, and for surfaces that face away from the sun
-            // (vanilla's face shading already darkens those).
-            float facing = smoothstep(-0.1, 0.35, dot(n, L));
-            shadow = hit * facing * day * (1.0 - smoothstep(60.0, 160.0, dist));
+            float s = useMap ? max(mapS * edge + hit * (1.0 - edge), hit * 0.6) : hit;
+            // Surfaces that face away from the sun are left to vanilla's face shading.
+            shadow = s * facing * day * (useMap ? 1.0 : 1.0 - smoothstep(60.0, 160.0, dist));
         }
 
         // Ambient occlusion: a ring of samples in view space, tested against the surface tangent plane.

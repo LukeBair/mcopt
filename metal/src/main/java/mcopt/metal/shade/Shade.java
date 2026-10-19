@@ -16,6 +16,11 @@ public final class Shade {
 	static final float SHADOW_LEN = f("mcopt.shade.shadowLen", 24f);
 	/** Ambient occlusion radius in blocks. */
 	static final float AO_RADIUS = f("mcopt.shade.aoRadius", 1.2f);
+	/** The sun shadow map (needs mcopt.own; one cascade around the camera). */
+	static final boolean MAP = Boolean.parseBoolean(System.getProperty("mcopt.shade.map", "false"));
+	static final int MAP_RES = Integer.getInteger("mcopt.shade.mapRes", 2048);
+	/** Half the cascade's width in blocks. */
+	static final float MAP_RADIUS = f("mcopt.shade.mapRadius", 128f);
 	/** 1 normals, 2 shadow, 3 ao; 0 the lit picture. */
 	static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
 
@@ -28,6 +33,8 @@ public final class Shade {
 	public static boolean suppress;
 	/** Freeze the camera at this yaw/pitch while a shot sequence runs (yaw 999 = leave alone). */
 	static final float YAW = f("mcopt.shade.shotYaw", 56f), PITCH = f("mcopt.shade.shotPitch", 5f);
+	/** Self-test: set the time of day (ticks) when the shot sequence starts and stop the clock (-1: leave). */
+	static final int SHOT_TIME = Integer.getInteger("mcopt.shade.shotTime", -1);
 	static int debugNow = DEBUG;
 	private static long t0, tStep;
 	private static int frames, step, pending = -1;
@@ -45,7 +52,14 @@ public final class Shade {
 		}
 		long now = System.nanoTime();
 		if (++frames < SHOT) return;
-		if (t0 == 0) { t0 = now; apply(SEQ[0]); }
+		if (t0 == 0) {
+			t0 = now;
+			apply(SEQ[0]);
+			if (SHOT_TIME >= 0) {
+				mc.player.connection.sendCommand("gamerule advance_time false");
+				mc.player.connection.sendCommand("time set " + SHOT_TIME);
+			}
+		}
 		long wait = step == 0 ? SHOT_DELAY : 4;
 		if (tStep == 0) tStep = now;
 		if (now - tStep < wait * 1_000_000_000L) return;

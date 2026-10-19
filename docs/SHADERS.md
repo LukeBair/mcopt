@@ -117,3 +117,8 @@ shadow side.
    code from `terrain.metal` factored into a shared function; keep that edit additive.
 2. Sample it in `shade.fsh` (PCF, normal-offset bias), keep contact shadows for detail; sun/moon colour by time of day.
 3. G-buffer redirect (PassRedirector/PassDelegate), water, bloom.
+
+Update: step 1 is written but unverified, behind `-Dmcopt.shade.map=true` (default off; needs `-Dmcopt.own=true`). `ShadeShadow` (level render head)
+calls OwnTerrain.shadowCull + new shadowDraw (kind 7|posonly solid, kind 6 cutout, depth-only pass); shade.fsh samples it (PCF, normal-offset bias).
+Next: look at the PNGs from `-Dmcopt.shade.shotTime=1000` (debug d2) to check the map draws and the sampling orientation, check `rain` arg
+(log showed 1.0, which would zero `day`), then light colour by time of day, then G-buffer/water/bloom.

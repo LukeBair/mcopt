@@ -2070,6 +2070,7 @@ public final class OwnTerrain {
 		List<SectionRenderDispatcher.RenderSection> visible) {
 		if (!MetalBridge.inRenderPass(this.encoder)) return false;
 		if (NO_FADE) fadeMs = 0;
+		if (mcopt.metal.shade.Shade.ON) mcopt.metal.shade.ShadeShadow.atlas(atlas, sampler);
 		this.beginFrame();
 		String mode = PROBE_MS > 0 ? this.probe() : "draw";
 		if (mode.startsWith("x-")) {
@@ -2347,6 +2348,44 @@ public final class OwnTerrain {
 	/** What a shadow draw after shadowCull reads: arena, section table, records, lists, indirect arguments (solid at 0, cutout at 20), list capacity. */
 	public long[] shadowBuffers() {
 		return new long[] {this.arenaBuffer, this.tables[(int) (this.frame % FRAMES)], this.recBuffer, FAT ? this.shFat : this.shLists, this.shArgs, this.shCap};
+	}
+
+	/**
+	 * Draws what the last shadowCull listed (solid with the position-only variant, cutout with the alpha-tested depth variant) into the
+	 * open pass, which must have no colour attachment and a reverse-Z depth. clip: the cascade's camera-relative clip matrix (the same
+	 * one given to shadowCull; the backend's row flip is applied by the vertex stage as for the view).
+	 */
+	public boolean shadowDraw(Matrix4fc clip, GpuTextureView atlas, GpuSampler sampler, GpuBufferSlice projection) {
+		if (this.shArgs == 0 || this.shCap == 0 || !MetalBridge.inRenderPass(this.encoder)) return false;
+		GpuBufferSlice fog = RenderSystem.getShaderFog();
+		GpuBuffer globals = RenderSystem.getGlobalSettingsUniform();
+		if (fog == null || globals == null) return false;
+		GpuBufferSlice terrain = RenderSystem.getDynamicUniforms().writeTerrainTransform(new Matrix4f(), atlas.getWidth(0), atlas.getHeight(0));
+		GpuTextureView light = Minecraft.getInstance().gameRenderer.lightmap();
+		GpuSampler lightSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+		long[] b = this.shadowBuffers();
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			long u = stack.nmalloc(8, 8 * 8);
+			MemoryUtil.memPutLong(u, MetalBridge.useBuffer(this.encoder, projection.buffer()));
+			MemoryUtil.memPutLong(u + 8, projection.offset());
+			MemoryUtil.memPutLong(u + 16, MetalBridge.useBuffer(this.encoder, globals));
+			MemoryUtil.memPutLong(u + 24, 0);
+			MemoryUtil.memPutLong(u + 32, MetalBridge.useBuffer(this.encoder, terrain.buffer()));
+			MemoryUtil.memPutLong(u + 40, terrain.offset());
+			MemoryUtil.memPutLong(u + 48, MetalBridge.useBuffer(this.encoder, fog.buffer()));
+			MemoryUtil.memPutLong(u + 56, fog.offset());
+			long d = stack.ncalloc(16, 1, DRAW_FRAME_BYTES);
+			MemoryUtil.memPutInt(d + 4, (int) (Util.getMillis() - this.baseMs));
+			MemoryUtil.memPutInt(d + 12, 1);
+			clip.getToAddress(d + 16);
+			for (int list = 0; list < 2; list++) {
+				MemoryUtil.memPutInt(d, list * this.shCap);
+				int kind = list == 0 ? 7 | 1 << 26 : 6;
+				OwnNative.draw(this.own, this.enc, kind, d, DRAW_FRAME_BYTES, b[0], b[1], b[2], b[3], b[4], list * 20L, u, MetalBridge.viewHandle(atlas),
+					MetalBridge.samplerHandle(sampler), MetalBridge.viewHandle(light), MetalBridge.samplerHandle(lightSampler));
+			}
+		}
+		return true;
 	}
 
 	public static boolean compact() {

@@ -2,6 +2,6 @@
 	"required": false,
 	"package": "mcopt.metal.mixin.shade",
 	"compatibilityLevel": "JAVA_25",
-	"client": ["ShadeGameRendererMixin", "ShadeShaderManagerMixin"],
+	"client": ["ShadeGameRendererMixin", "ShadeShaderManagerMixin", "ShadeLevelRendererMixin"],
 	"injectors": { "defaultRequire": 0 }
 }
