@@ -6,15 +6,16 @@ import net.minecraft.commands.CommandSourceStack;
 
 /**
  * The benchmark scene of -Dmcopt.server.bench=N: a stone arena at y=200 over the origin with N villagers, N cows, N chickens,
- * N/2 husks and N/4 iron golems, a ring of hoppers circulating items, a wheat field, and flowing water. Built by commands once
+ * N/2 husks and N/4 iron golems, boats, shulkers and minecarts, a ring of hoppers circulating items, a wheat field, and flowing water. Built by commands once
  * a player is in the world; 300 ticks of warm-up, then 1000 timed ticks; the result is printed and the game stops.
  */
 public final class ServerBench {
 	private ServerBench() { }
 
-	private static final int BUILD_AT = 200, WARMUP = 300, MEASURE = Integer.getInteger("mcopt.server.benchTicks", 1000);
+	private static final int BUILD_AT = 120, WARMUP = 150, MEASURE = Integer.getInteger("mcopt.server.benchTicks", 1000);
 	private static int tick;
-	private static long t0;
+	private static long t0, c0, cpuSum;
+	private static final java.lang.management.ThreadMXBean TMX = java.lang.management.ManagementFactory.getThreadMXBean();
 	private static final long[] samples = new long[MEASURE];
 	private static int n;
 
@@ -25,6 +26,7 @@ public final class ServerBench {
 
 	public static void start(MinecraftServer server) {
 		t0 = System.nanoTime();
+		c0 = TMX.getCurrentThreadCpuTime();
 		if (server.getPlayerCount() == 0) return;
 		tick++;
 		if (tick == 1) {
@@ -37,8 +39,8 @@ public final class ServerBench {
 	private static void build(MinecraftServer server) {
 		int k = ServerOpt.BENCH;
 		String[] cmds = {
-			"fill -24 199 -24 24 199 24 stone", "fill -24 200 -24 24 203 24 air", "fill -25 200 -25 25 203 -25 stone", "fill -25 200 25 25 203 25 stone",
-			"fill -25 200 -25 -25 203 25 stone", "fill 25 200 -25 25 203 25 stone",
+			"fill -24 199 -24 24 199 24 stone", "fill -24 200 -24 24 203 24 air", "fill -25 200 -25 25 206 -25 stone", "fill -25 200 25 25 206 25 stone",
+			"fill -25 200 -25 -25 206 25 stone", "fill 25 200 -25 25 206 25 stone",
 			// hopper ring (x -8..8, z -8..8, y 200): each side points to the next
 			"fill -8 200 -8 7 200 -8 hopper[facing=east]", "fill 8 200 -8 8 200 7 hopper[facing=south]",
 			"fill 8 200 8 -7 200 8 hopper[facing=west]", "fill -8 200 8 -8 200 -7 hopper[facing=north]",
@@ -49,13 +51,20 @@ public final class ServerBench {
 		};
 		for (String c : cmds) run(server, c);
 		for (int i = 0; i < k; i++) {
-			int x = (i * 7) % 40 - 20, z = (i * 13) % 40 - 20;
-			if (Math.abs(x) < 10 && Math.abs(z) < 10 || x > 10 && z > 10) { x += 17; z -= 17; }
+			int x = (i * 7) % 41 - 20, z = (i * 13) % 41 - 20;
+			if (Math.abs(x) < 10 && Math.abs(z) < 10) x = x < 0 ? x - 10 : x + 10; // clear of the hopper ring
+			if (x > 10 && z > 10) z -= 15; // and of the farm
 			run(server, "summon villager " + x + " 200 " + z + " {PersistenceRequired:1b}");
 			run(server, "summon cow " + (x + 1) + " 200 " + z + " {PersistenceRequired:1b}");
 			run(server, "summon chicken " + x + " 200 " + (z + 1) + " {PersistenceRequired:1b}");
 			if (i % 2 == 0) run(server, "summon husk " + (x - 1) + " 200 " + z + " {PersistenceRequired:1b}");
 			if (i % 4 == 0) run(server, "summon iron_golem " + x + " 200 " + (z - 1) + " {PersistenceRequired:1b}");
+		}
+		for (int i = 0; i < Math.max(4, k / 8); i++) { // collidable classes among the crowd
+			int x = -18 + (i * 5) % 36, z = 14 + (i * 3) % 8;
+			run(server, "summon oak_boat " + x + " 200 " + z);
+			run(server, "summon shulker " + (x + 2) + " 200 " + z + " {NoAI:1b}");
+			run(server, "summon minecart " + x + " 200 " + (z - 6));
 		}
 		String[] items = {"stone", "dirt", "oak_log", "sand", "gravel", "coal", "iron_ingot", "gold_ingot", "apple", "bread", "carrot", "potato"};
 		for (int i = 0; i < 150; i++) {
@@ -66,6 +75,7 @@ public final class ServerBench {
 
 	public static void end(MinecraftServer server) {
 		if (tick <= BUILD_AT + WARMUP) return;
+		cpuSum += TMX.getCurrentThreadCpuTime() - c0;
 		samples[n++] = System.nanoTime() - t0;
 		if (n == MEASURE) {
 			long[] s = samples.clone();
@@ -74,8 +84,8 @@ public final class ServerBench {
 			for (long v : s) sum += v;
 			int entities = 0;
 			for (var level : server.getAllLevels()) for (var e : level.getAllEntities()) entities++;
-			System.out.printf("mcopt-bench: RESULT mean=%.2f median=%.2f p95=%.2f p99=%.2f max=%.2f ms over %d ticks, %d entities%n",
-				sum / MEASURE / 1e6, s[MEASURE / 2] / 1e6, s[MEASURE * 95 / 100] / 1e6, s[MEASURE * 99 / 100] / 1e6, s[MEASURE - 1] / 1e6, MEASURE, entities);
+			System.out.printf("mcopt-bench: RESULT cpu=%.2f mean=%.2f median=%.2f p95=%.2f p99=%.2f max=%.2f ms over %d ticks, %d entities%n",
+				cpuSum / (double) MEASURE / 1e6, sum / MEASURE / 1e6, s[MEASURE / 2] / 1e6, s[MEASURE * 95 / 100] / 1e6, s[MEASURE * 99 / 100] / 1e6, s[MEASURE - 1] / 1e6, MEASURE, entities);
 			System.out.flush();
 			new Thread(() -> System.exit(0), "mcopt-bench exit").start();
 		}

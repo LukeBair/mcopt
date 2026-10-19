@@ -16,6 +16,25 @@ public final class ServerOpt {
 
 	public static final int BENCH = Integer.getInteger("mcopt.server.bench", 0);
 
+	public static final boolean COLLIDE_VERIFY = "verify".equals(prop("collide"));
+	public static final boolean COLLIDE = "true".equals(prop("collide")) || COLLIDE_VERIFY;
+	public static final boolean COLLIDE_INDEX_VERIFY = "verify".equals(prop("collideIndex"));
+	public static final boolean COLLIDE_INDEX = "true".equals(prop("collideIndex")) || COLLIDE_INDEX_VERIFY;
+	public static final boolean ENTITY_INDEX_VERIFY = "verify".equals(prop("entityIndex"));
+	public static final boolean ENTITY_INDEX = "true".equals(prop("entityIndex")) || ENTITY_INDEX_VERIFY;
+
+	private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> COUNTERS = new java.util.concurrent.ConcurrentHashMap<>();
+
+	static {
+		if (COLLIDE_VERIFY || ENTITY_INDEX_VERIFY || COLLIDE_INDEX_VERIFY) {
+			Runtime.getRuntime().addShutdownHook(new Thread(() -> System.out.println("mcopt-server: verify counters " + new java.util.TreeMap<>(COUNTERS)), "mcopt-server stats"));
+		}
+	}
+
+	public static void count(String key) {
+		COUNTERS.computeIfAbsent(key, k -> new java.util.concurrent.atomic.LongAdder()).increment();
+	}
+
 	public static String prop(String name) {
 		String v = System.getProperty("mcopt.server." + name);
 		return v == null ? "" : v.trim().toLowerCase(Locale.ROOT);
@@ -25,6 +44,9 @@ public final class ServerOpt {
 	public static boolean mixinEnabled(String simpleName) {
 		return switch (simpleName) {
 			case "ServerBenchMixin" -> BENCH > 0;
+			case "BlockCollisionsMixin" -> COLLIDE;
+			case "EntityGetterMixin", "EntitySectionMixin", "LevelEntityGetterAdapterMixin", "LevelEntitiesAccessor" -> COLLIDE_INDEX;
+			case "EntitySectionStorageMixin" -> ENTITY_INDEX;
 			default -> false;
 		};
 	}

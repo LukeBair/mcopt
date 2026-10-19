@@ -4,7 +4,13 @@
 	"plugin": "mcopt.metal.mixin.server.ServerMixinPlugin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"ServerBenchMixin"
+		"ServerBenchMixin",
+		"BlockCollisionsMixin",
+		"EntitySectionStorageMixin",
+		"EntityGetterMixin",
+		"EntitySectionMixin",
+		"LevelEntityGetterAdapterMixin",
+		"LevelEntitiesAccessor"
 	],
 	"injectors": {
 		"defaultRequire": 1
