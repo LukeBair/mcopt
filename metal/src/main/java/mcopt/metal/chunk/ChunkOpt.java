@@ -10,16 +10,8 @@ import java.util.Map;
  *
  * <ul>
  * <li>{@code saveSkip=probe|true} (C2): a chunk write whose bytes equal what the region file already holds, apart from the
- *     LastUpdate stamp, is skipped ({@code true}); {@code probe} compares and counts but always writes. Its own Sodium-free
- *     package and mixin config: mcopt.metal.chunkio, mcopt-metal-chunkio.mixins.json.</li>
- * <li>{@code mesh=air,bounds,vis,lambda} or {@code mesh=all} (C1, Sodium's meshers): empty neighbour sections share one AIR array
- *     instead of a 4096-entry fill (air); LevelSlice's volume check from three relative ranges in one branch (bounds); the
- *     section visibility graph by a bit-parallel sweep (vis); the two per-block method references of BlockRenderer.renderModel
- *     made once per renderer (lambda). Each gives the same mesh and visibility output as Sodium's code.</li>
- * <li>{@code clones=N} (C1, render thread): Sodium's cloned-section cache holds N sections instead of 512.</li>
- * <li>{@code clonesCleanup=true|verify|ab} (C1, render thread): the cache's per-frame expiry walk stops at the first entry that
- *     has not expired (the entries are in last-use order), so it costs what it evicts; verify checks nothing expired is left,
- *     ab times the original and this walk on random frames of the same run.</li>
+ *     LastUpdate stamp, is skipped ({@code true}); {@code probe} compares and counts but always writes. Its own package
+ *     and mixin config: mcopt.metal.chunkio, mcopt-metal-chunkio.mixins.json.</li>
  * <li>{@code parse=true|verify} (C4): chunk-section palettes decoded without DFU (FastPalette); verify decodes both ways, keeps
  *     vanilla's result and counts mismatches.</li>
  * <li>{@code serialize=true|verify} (C2/C4): chunk-section palettes encoded for saving without DFU; verify encodes both
@@ -37,16 +29,9 @@ import java.util.Map;
 public final class ChunkOpt {
 	private ChunkOpt() { }
 
-	public static final String SAVE_SKIP = mcopt.metal.chunkio.ChunkIo.SAVE_SKIP; // saveSkip lives in mcopt.metal.chunkio (no Sodium)
+	public static final String SAVE_SKIP = mcopt.metal.chunkio.ChunkIo.SAVE_SKIP; // saveSkip lives in mcopt.metal.chunkio
 	public static final boolean SAVE_SKIP_ON = mcopt.metal.chunkio.ChunkIo.SAVE_SKIP_ON;
 	public static final boolean SAVE_PROBE = mcopt.metal.chunkio.ChunkIo.SAVE_PROBE;
-	public static final java.util.Set<String> MESH = meshSet(prop("mesh"));
-	public static final int CLONES = Integer.getInteger("mcopt.chunk.clones", 0);
-	public static final boolean CLONES_VERIFY = Boolean.getBoolean("mcopt.chunk.clonesVerify");
-	public static final String CLONES_CLEANUP = prop("clonesCleanup");
-	public static final boolean CLONES_CLEANUP_VERIFY = "verify".equals(CLONES_CLEANUP);
-	public static final boolean CLONES_CLEANUP_AB = "ab".equals(CLONES_CLEANUP);
-	public static final boolean CLONES_CLEANUP_ON = "true".equals(CLONES_CLEANUP) || CLONES_CLEANUP_VERIFY || CLONES_CLEANUP_AB;
 	public static final String PARSE = prop("parse");
 	public static final boolean PARSE_VERIFY = "verify".equals(PARSE);
 	public static final boolean PARSE_FAST = "true".equals(PARSE) || PARSE_VERIFY;
@@ -65,24 +50,12 @@ public final class ChunkOpt {
 	private static final boolean LIGHT_REQUESTED = "true".equals(prop("light")) || "verify".equals(prop("light"));
 	public static final boolean LIGHT_VERIFY = "verify".equals(prop("light")) && !ALLOC_LIGHT_MAP;
 	public static final boolean LIGHT = LIGHT_REQUESTED && !ALLOC_LIGHT_MAP;
-	public static final boolean STATS = Boolean.getBoolean("mcopt.chunk.stats") || SAVE_PROBE || PARSE_VERIFY || POI_VERIFY || CLONES_VERIFY || LIGHT_VERIFY || SERIALIZE_VERIFY
-		|| CLONES_CLEANUP_VERIFY || CLONES_CLEANUP_AB;
+	public static final boolean STATS = Boolean.getBoolean("mcopt.chunk.stats") || SAVE_PROBE || PARSE_VERIFY || POI_VERIFY || LIGHT_VERIFY || SERIALIZE_VERIFY;
 
 	static {
 		if (LIGHT_REQUESTED && ALLOC_LIGHT_MAP) {
 			System.out.println("mcopt-chunk: light off: mcopt.alloc.lightMap is on (both replace the light engine's section-map copies; they can't run together)");
 		}
-	}
-
-	private static java.util.Set<String> meshSet(String v) {
-		java.util.Set<String> out = new java.util.TreeSet<>();
-		for (String s : v.split(",")) if (!s.isBlank()) out.add(s.trim());
-		if (out.remove("all")) out.addAll(java.util.List.of("air", "bounds", "vis", "lambda"));
-		return java.util.Collections.unmodifiableSet(out);
-	}
-
-	public static boolean mesh(String feature) {
-		return MESH.contains(feature);
 	}
 
 	private static String prop(String name) {
@@ -93,13 +66,6 @@ public final class ChunkOpt {
 	/** Whether the mixin named (simple class name) should apply: each one belongs to exactly one switch. */
 	public static boolean mixinEnabled(String simpleName) {
 		return switch (simpleName) {
-			case "LevelSliceAirMixin" -> mesh("air");
-			case "LevelSliceBoundsMixin" -> mesh("bounds");
-			case "DirectionalVisGraphMixin", "BitArrayAccessor" -> mesh("vis");
-			case "BlockRendererMixin" -> mesh("lambda");
-			case "LevelBiomeSliceMixin" -> mesh("biome");
-			case "ClonedChunkSectionCacheMixin" -> CLONES > 0;
-			case "ClonedChunkSectionCacheCleanupMixin" -> CLONES_CLEANUP_ON;
 			case "PalettedContainerFactoryMixin" -> PARSE_FAST || SERIALIZE;
 			case "AcquirePoiMixin", "PoiSectionAccessor", "SectionStorageAccess" -> POI;
 			case "ServerLevelTickMixin", "LevelRandAccessor" -> TICKS;
@@ -128,7 +94,7 @@ public final class ChunkOpt {
 	/** Cumulative counters since start, sorted by name (the bench stores one per phase and diffs them). */
 	public static Map<String, Object> snapshot() {
 		Map<String, Object> out = new LinkedHashMap<>();
-		out.put("flags", Map.of("saveSkip", SAVE_SKIP, "mesh", String.join(",", MESH), "clones", CLONES, "parse", PARSE, "clonesCleanup", CLONES_CLEANUP,
+		out.put("flags", Map.of("saveSkip", SAVE_SKIP, "parse", PARSE,
 			"light", LIGHT_VERIFY ? "verify" : LIGHT ? "true" : LIGHT_REQUESTED ? "off (alloc.lightMap)" : ""));
 		out.putAll(mcopt.metal.chunkio.ChunkIo.counters());
 		return out;

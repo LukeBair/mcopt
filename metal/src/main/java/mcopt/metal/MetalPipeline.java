@@ -63,17 +63,14 @@ final class MetalPipeline implements BackendRenderPipeline {
 	final String name;
 	/** MTLCompareFunction of depthState, for MetalProbe. */
 	final int depthCompare;
-	/** Sodium solid/cutout terrain only, with MetalTerrain on: the same pipeline fetching its own vertices; 0 otherwise. */
-	final long pulled;
 	private final MetalEncoder encoder;
 	private final CreateInfo info;
 	private boolean closed;
 
-	private MetalPipeline(MetalEncoder encoder, long withDepth, long withoutDepth, long pulled, long depthState, int depthCompare, CreateInfo info) {
+	private MetalPipeline(MetalEncoder encoder, long withDepth, long withoutDepth, long depthState, int depthCompare, CreateInfo info) {
 		this.encoder = encoder;
 		this.withDepth = withDepth;
 		this.withoutDepth = withoutDepth;
-		this.pulled = pulled;
 		this.depthState = depthState;
 		this.depthStateWithoutDepth = withoutDepth != 0 ? depthState : 0;
 		this.depthCompare = depthCompare;
@@ -99,7 +96,7 @@ final class MetalPipeline implements BackendRenderPipeline {
 		long ctx = encoder.ctx;
 		long t0 = System.nanoTime(), t1 = t0, t2 = t0;
 		CreateInfo.Shader vertex = shader(info, ShaderType.VERTEX), fragment = shader(info, ShaderType.FRAGMENT);
-		long vlib = 0, flib = 0, plib = 0;
+		long vlib = 0, flib = 0;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long err = stack.nmalloc(1, 4096);
 			boolean points = info.primitiveTopology() == PrimitiveTopology.POINTS;
@@ -131,10 +128,9 @@ final class MetalPipeline implements BackendRenderPipeline {
 				withoutDepth = pipelineNewCounted(ctx, vlib, vname, flib, fname, describe(stack, info, false, true), err, 4096);
 				if (withoutDepth == 0) throw new IllegalStateException(info.name() + ": " + MemoryUtil.memUTF8(err));
 			}
-			long pulled = 0;
 			int compare = depth == null ? 7 : MetalConst.compare(depth.depthTest());
 			long depthState = Native.depthStateNew(ctx, compare, depth != null && depth.writeDepth() ? 1 : 0);
-			MetalPipeline pipeline = new MetalPipeline(encoder, withDepth, withoutDepth, pulled, depthState, compare, info);
+			MetalPipeline pipeline = new MetalPipeline(encoder, withDepth, withoutDepth, depthState, compare, info);
 			if (withoutDepth == 0) {
 				pipeline.vertexSource = v;
 				pipeline.fragmentSource = f;
@@ -143,7 +139,6 @@ final class MetalPipeline implements BackendRenderPipeline {
 		} finally {
 			if (vlib != 0) Native.release(vlib);
 			if (flib != 0) Native.release(flib);
-			if (plib != 0) Native.release(plib);
 			long t3 = System.nanoTime();
 			synchronized (MetalPipeline.class) {
 				compiled++;
@@ -165,25 +160,6 @@ final class MetalPipeline implements BackendRenderPipeline {
 	 */
 	private static final boolean UNCACHED = Boolean.getBoolean("mcopt.metal.uncachedMsl");
 	private static final long UNCACHED_NONCE = System.nanoTime();
-
-	/** -Dmcopt.metal.builtinMsl=false compiles Sodium's terrain from its own SPIR-V again, for A/B runs. */
-	private static final boolean BUILTIN_MSL = Boolean.parseBoolean(System.getProperty("mcopt.metal.builtinMsl", "true"));
-	/**
-	 * Pipelines that use the hand-written MSL in resources/mcopt/metal/msl, with the ALPHA_CUTOUT define Sodium's
-	 * ShaderChunkRenderer gives each. Only these exact names: Sodium's OIT variants are named differently and keep their SPIR-V.
-	 */
-	private static final Map<String, String> SODIUM_TERRAIN = Map.of(
-		"sodium:pipeline/solid_terrain", "",
-		"sodium:pipeline/cutout_terrain", "#define ALPHA_CUTOUT 0.5\n",
-		"sodium:pipeline/translucent_terrain", "#define ALPHA_CUTOUT 0.01\n");
-
-	private static String resource(String name) {
-		try (InputStream in = MetalPipeline.class.getResourceAsStream("/mcopt/metal/msl/" + name)) {
-			return new String(Objects.requireNonNull(in, name).readAllBytes(), StandardCharsets.UTF_8);
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
-		}
-	}
 
 	private static String fileName(String pipelineName) {
 		return pipelineName.replaceAll("[^A-Za-z0-9._-]", "_");
@@ -411,7 +387,6 @@ final class MetalPipeline implements BackendRenderPipeline {
 			this.encoder.releaseLater(this.withDepth);
 			if (this.withoutDepth != 0) this.encoder.releaseLater(this.withoutDepth);
 			if (this.depthStateWithoutDepth != 0 && this.depthStateWithoutDepth != this.depthState) this.encoder.releaseLater(this.depthStateWithoutDepth);
-			if (this.pulled != 0) this.encoder.releaseLater(this.pulled);
 			this.encoder.releaseLater(this.depthState);
 		}
 	}

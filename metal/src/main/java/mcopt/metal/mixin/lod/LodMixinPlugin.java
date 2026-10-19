@@ -18,8 +18,6 @@ public final class LodMixinPlugin implements IMixinConfigPlugin {
 	private static final boolean ENABLED = Boolean.getBoolean("mcopt.lod") || System.getProperty("mcopt.lod.radius") != null;
 	/** -Dmcopt.lod.truthRd=N: ground-truth captures (real chunks past 32): only the LodTruth mixins, with or without far terrain. */
 	private static final boolean TRUTH = System.getProperty("mcopt.lod.truthRd") != null;
-	/** -Dmcopt.lod.fade=instant: Sodium's section fade-in off while far terrain draws (LodSodiumFadeMixin). */
-	private static final boolean FADE_INSTANT = "instant".equals(System.getProperty("mcopt.lod.fade", ""));
 
 	@Override
 	public void onLoad(String mixinPackage) {
@@ -32,7 +30,6 @@ public final class LodMixinPlugin implements IMixinConfigPlugin {
 
 	@Override
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-		if (mixinClassName.endsWith(".LodSodiumFadeMixin")) return ENABLED && FADE_INSTANT && net.fabricmc.loader.api.FabricLoader.getInstance().isModLoaded("sodium");
 		return mixinClassName.contains(".LodTruth") ? TRUTH : ENABLED;
 	}
 

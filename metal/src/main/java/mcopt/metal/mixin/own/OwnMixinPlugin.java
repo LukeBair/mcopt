@@ -2,14 +2,12 @@ package mcopt.metal.mixin.own;
 
 import java.util.List;
 import java.util.Set;
-import net.fabricmc.loader.api.FabricLoader;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
 /**
- * Our own near terrain's mixins apply only with -Dmcopt.own=true and without Sodium (which replaces the same renderer): without
- * the switch the game is byte-for-byte what it is without them. Reads the property itself so nothing of mcopt.metal.own loads
+ * Our own near terrain's mixins apply only with -Dmcopt.own=true: without the switch the game is byte-for-byte what it is without them. Reads the property itself so nothing of mcopt.metal.own loads
  * before the game does.
  */
 public final class OwnMixinPlugin implements IMixinConfigPlugin {
@@ -17,11 +15,10 @@ public final class OwnMixinPlugin implements IMixinConfigPlugin {
 		mcopt.metal.Profile.apply(); // before any flag is read
 	}
 
-	private static final boolean ENABLED = Boolean.getBoolean("mcopt.own") && !FabricLoader.getInstance().isModLoaded("sodium");
+	private static final boolean ENABLED = Boolean.getBoolean("mcopt.own");
 
 	@Override
 	public void onLoad(String mixinPackage) {
-		if (Boolean.getBoolean("mcopt.own") && !ENABLED) System.out.println("mcopt-own: Sodium is loaded, our near terrain stays off");
 	}
 
 	@Override

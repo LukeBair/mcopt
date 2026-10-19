@@ -2,13 +2,12 @@ package mcopt.metal.mixin.ownmesh;
 
 import java.util.List;
 import java.util.Set;
-import net.fabricmc.loader.api.FabricLoader;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 
 /**
- * Our own mesher's mixins apply only with -Dmcopt.own=true, without Sodium, and with -Dmcopt.own.mesh=true|verify
+ * Our own mesher's mixins apply only with -Dmcopt.own=true and with -Dmcopt.own.mesh=true|verify
  * or -Dmcopt.own.mesh.stats=true. Otherwise the game is byte-for-byte what it is without them.
  */
 public final class OwnMeshMixinPlugin implements IMixinConfigPlugin {
@@ -18,8 +17,7 @@ public final class OwnMeshMixinPlugin implements IMixinConfigPlugin {
 
 	private static final String MODE = System.getProperty("mcopt.own.mesh", "false");
 	private static final boolean MESH = "true".equals(MODE) || "verify".equals(MODE);
-	private static final boolean ENABLED = Boolean.getBoolean("mcopt.own") && !FabricLoader.getInstance().isModLoaded("sodium")
-		&& (MESH || Boolean.getBoolean("mcopt.own.mesh.stats"));
+	private static final boolean ENABLED = Boolean.getBoolean("mcopt.own") && (MESH || Boolean.getBoolean("mcopt.own.mesh.stats"));
 
 	@Override
 	public void onLoad(String mixinPackage) {

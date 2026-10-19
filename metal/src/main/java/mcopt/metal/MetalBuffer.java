@@ -15,8 +15,6 @@ class MetalBuffer extends BaseGpuBuffer {
 	long handle, address;
 	/** Submit index of the last command that touched this buffer on the GPU; see MetalEncoder.idle. */
 	long lastUse = -1;
-	/** One of Sodium's arena buffers (its terrain geometry), with MetalTerrain on: GPU copies into it go to the pre command buffer. */
-	boolean arena;
 	private final MetalEncoder encoder;
 	private boolean closed, mapped;
 	/** Memory rename() moved off and the GPU is done with, for the next rename. */
@@ -54,7 +52,7 @@ class MetalBuffer extends BaseGpuBuffer {
 	 * a buffer someone mapped, whose view would keep pointing at the old memory.
 	 */
 	boolean rename() {
-		if (this.mapped || this.arena) return false;
+		if (this.mapped) return false;
 		long old = this.handle;
 		Long spare = this.spares.poll();
 		this.handle = spare != null ? spare : Native.bufferNew(this.encoder.ctx, this.size());

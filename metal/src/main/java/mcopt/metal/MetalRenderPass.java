@@ -41,14 +41,10 @@ final class MetalRenderPass implements RenderPassBackend {
 	long indices;
 	/** Texel buffers need an MTLTexture view per (buffer, range); build each once per pass. */
 	private final Map<GpuBufferSlice, Long> texelViews = new HashMap<>();
-	/** Last vertex buffer in slot 0, for MetalTerrain and MetalProbe. */
-	private @Nullable GpuBufferSlice vertexBuffer0;
-	/** Set while the current pipeline is Sodium terrain with a pulled twin: its draws go to MetalTerrain, not the encoder. */
-	private @Nullable MetalPipeline recording;
-	/** The frontend's index buffer, restored after MetalTerrain draws with its own. */
+	/** The frontend's index buffer, restored after a split. */
 	private long indexHandle;
 	private int indexInt;
-	/** What the frontend set in the encoder besides uniforms, for MetalTerrain.OCC to put back after it splits the pass. */
+	/** What the frontend set in the encoder besides uniforms, put back after someone splits the pass (restoreAfterSplit). */
 	private final int[] scissor = new int[4];
 	private final @Nullable GpuBufferSlice[] vertexBuffers = new GpuBufferSlice[4];
 	private final byte[] pushConstants = new byte[128];
@@ -91,12 +87,8 @@ final class MetalRenderPass implements RenderPassBackend {
 			this.dirtyUpTo = p.uniforms.size();
 			return;
 		}
-		boolean terrain = p.pulled != 0 && this.hasDepth, record = terrain && this.encoder.terrain.split;
-		if (terrain) this.encoder.terrain.terrainPixels = (long) this.areaWidth * this.areaHeight;
-		this.flushTerrain(record);
 		if (this.encoder.tracing()) this.encoder.trace("  pipeline", p.name, "after draws:", this.draws, "triangles:", this.indices / 3);
 		this.pipeline = p;
-		this.recording = record ? p : null;
 		Native.pipeline(this.enc, this.hasDepth ? p.withDepth : p.withoutDepth(), this.hasDepth ? p.depthState : p.depthStateWithoutDepth(), p.cull ? 1 : 0, p.wireframe ? 1 : 0, p.depthBiasConstant, p.depthBiasSlope, p.primitive);
 		Arrays.fill(this.pending, 0, p.uniforms.size(), null);
 		this.dirtyUpTo = p.uniforms.size();
@@ -119,29 +111,12 @@ final class MetalRenderPass implements RenderPassBackend {
 
 	/** Called by the encoder when the frontend ends the pass. */
 	void end() {
-		this.flushTerrain(false);
 		if (this.delegate != null) this.delegate.end(this.enc);
 	}
 
 	/** With a delegate: false when this draw must not be encoded (pipeline not taken over, or the delegate says so). */
 	private boolean delegated() {
 		return this.delegate == null || this.slots != null && this.delegate.beforeDraw(this.enc);
-	}
-
-	/**
-	 * Draws the Sodium terrain recorded under the current pipeline, then puts back what that draw changed. more: the next
-	 * pipeline is pulled terrain too, so MetalTerrain.OCC's split can wait for its flush and serve both (Sodium's terrain
-	 * pipelines only multi-draw, which is recorded, so nothing is encoded in between).
-	 */
-	private void flushTerrain(boolean more) {
-		MetalPipeline p = this.recording;
-		if (p == null) return;
-		this.encoder.terrain.flush(this.enc, p, (GpuBufferSlice) Objects.requireNonNull(this.bound[uniform(p, "u_Globals")]), this.areaWidth, this.areaHeight,
-			this.restorer(p));
-		if (!more) this.encoder.terrain.split(this.enc, this::rebind);
-		if (this.indexHandle != 0) Native.index(this.enc, this.indexHandle, this.indexInt);
-		Arrays.fill(this.bound, MetalTerrain.QUADS_SLOT, MetalTerrain.ARENAS_SLOT + 1, null);
-		this.recording = null;
 	}
 
 	/**
@@ -172,40 +147,6 @@ final class MetalRenderPass implements RenderPassBackend {
 		this.reapplyPipeline();
 	}
 
-	/** After MetalTerrain split the pass: the reopened encoder has none of the frontend's state, so bind it all again. */
-	private void rebind() {
-		Arrays.fill(this.bound, null);
-		this.dirtyUpTo = Objects.requireNonNull(this.pipeline).uniforms.size();
-		this.bindUniforms(0);
-		Native.scissor(this.enc, this.scissor[0], this.scissor[1], this.scissor[2], this.scissor[3]);
-		for (int slot = 0; slot < this.vertexBuffers.length; slot++) {
-			GpuBufferSlice vb = this.vertexBuffers[slot];
-			if (vb != null) Native.vertexBuffer(this.enc, MetalConst.VERTEX_BUFFER_BASE + slot, this.encoder.use(vb.buffer()).handle, vb.offset());
-		}
-		if (this.pushConstantsLength == 0) return;
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			ByteBuffer bytes = stack.malloc(this.pushConstantsLength).put(this.pushConstants, 0, this.pushConstantsLength).flip();
-			Native.bytes(this.enc, MetalConst.PUSH_CONSTANTS_INDEX, MemoryUtil.memAddress(bytes), this.pushConstantsLength);
-		}
-	}
-
-	/** Binds again what p's draws are bound with now (its uniforms and the scissor), for MetalTerrain to draw more of them after a split. */
-	private Runnable restorer(MetalPipeline p) {
-		Object[] values = Arrays.copyOf(this.bound, p.uniforms.size());
-		int[] scissor = this.scissor.clone();
-		return () -> {
-			for (int i = 0; i < values.length; i++) this.bindUniform(p.uniforms.get(i), i, values[i]);
-			Native.scissor(this.enc, scissor[0], scissor[1], scissor[2], scissor[3]);
-		};
-	}
-
-	private static int uniform(MetalPipeline p, String name) {
-		for (int i = 0; i < p.uniforms.size(); i++) {
-			if (p.uniforms.get(i).name().equals(name)) return i;
-		}
-		throw new IllegalStateException(p.name + " has no uniform " + name);
-	}
-
 	@Override
 	public void setUniform(int index, @Nullable Object value) {
 		this.pending[index] = value;
@@ -214,12 +155,8 @@ final class MetalRenderPass implements RenderPassBackend {
 
 	@Override
 	public void pushConstants(ByteBuffer value) {
-		if (this.recording != null) {
-			this.encoder.terrain.pushConstants(MemoryUtil.memAddress(value), value.remaining());
-			return;
-		}
 		Native.bytes(this.enc, MetalConst.PUSH_CONSTANTS_INDEX, MemoryUtil.memAddress(value), value.remaining());
-		if (MetalTerrain.OCC && value.remaining() <= this.pushConstants.length) {
+		if (value.remaining() <= this.pushConstants.length) {
 			this.pushConstantsLength = value.remaining();
 			value.get(value.position(), this.pushConstants, 0, this.pushConstantsLength);
 		}
@@ -243,8 +180,6 @@ final class MetalRenderPass implements RenderPassBackend {
 	public void setVertexBuffer(int slot, @Nullable GpuBufferSlice vertexBuffer) {
 		if (vertexBuffer == null) return;
 		if (MetalConst.VERTEX_BUFFER_BASE + slot > 30) throw new IllegalArgumentException("Metal backend supports vertex buffer slots 0-3, got " + slot);
-		if (slot == 0) this.vertexBuffer0 = vertexBuffer;
-		if (this.recording != null) return;
 		Native.vertexBuffer(this.enc, MetalConst.VERTEX_BUFFER_BASE + slot, this.encoder.use(vertexBuffer.buffer()).handle, vertexBuffer.offset());
 		this.vertexBuffers[slot] = vertexBuffer;
 	}
@@ -315,28 +250,7 @@ final class MetalRenderPass implements RenderPassBackend {
 		if (!this.delegated()) return;
 		this.bindUniforms(1);
 		this.indices += (long) indexCount * instanceCount;
-		String name = Objects.requireNonNull(this.pipeline).name;
-		boolean clouds = name.equals("minecraft:pipeline/clouds") || name.equals("minecraft:pipeline/flat_clouds");
-		if (this.encoder.terrain.split && clouds && instanceCount == 1 && firstIndex == 0 && vertexOffset == 0 && this.drawClouds(indexCount / 6)) return;
 		Native.drawIndexed(this.enc, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
-	}
-
-	/**
-	 * Vanilla's clouds, drawn from MetalTerrain.cullClouds' list: the same pixels, from only the faces that can be on screen.
-	 * Only in frames that split, where it pays (ap5: 1080p spin 1156 -> 1175 fps); in plain ones its compute pass in the
-	 * pre command buffer costs more than it saves (ap4: 3456x2234 spin 702 -> 714 fps without it).
-	 */
-	private boolean drawClouds(int faces) {
-		MetalPipeline p = Objects.requireNonNull(this.pipeline);
-		int at = uniform(p, "CloudFaces");
-		MetalBuffer kept = this.encoder.terrain.cullClouds((GpuBufferSlice) this.bound[at], faces, (GpuBufferSlice) this.bound[uniform(p, "DynamicTransforms")],
-			(GpuBufferSlice) this.bound[uniform(p, "Projection")], (GpuBufferSlice) this.bound[uniform(p, "CloudInfo")]);
-		if (kept == null) return false;
-		this.bindUniform(p.uniforms.get(at), at, kept.slice(MetalTerrain.CLOUD_FACES, MetalTerrain.cloudFacesLength(faces)));
-		this.bound[at] = null; // so the next draw binds the frontend's faces again
-		this.dirtyUpTo = Math.max(this.dirtyUpTo, at + 1);
-		Native.drawIndexedIndirect(this.enc, kept.handle, 0, 1);
-		return true;
 	}
 
 	@Override
@@ -351,10 +265,6 @@ final class MetalRenderPass implements RenderPassBackend {
 		if (!this.delegated()) return;
 		this.bindUniforms(drawCount);
 		if (this.encoder.tracing()) for (int i = 0; i < drawCount; i++) this.indices += indexCounts.get(indexCounts.position() + i);
-		if (this.recording != null) {
-			this.encoder.terrain.record(Objects.requireNonNull(this.vertexBuffer0), indexCounts, vertexOffsets, drawCount);
-			return;
-		}
 		Native.multiDrawIndexedSeparate(this.enc, MemoryUtil.memAddress(firstIndexOffsets), MemoryUtil.memAddress(indexCounts),
 			MemoryUtil.memAddress(vertexOffsets), drawCount);
 	}

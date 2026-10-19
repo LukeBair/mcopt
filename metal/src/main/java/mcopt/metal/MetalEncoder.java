@@ -81,8 +81,6 @@ final class MetalEncoder implements CommandEncoderBackend {
 	final long ctx;
 	final long enc;
 	final MetalTransientMemory transientMemory;
-	/** Draws Sodium's solid and cutout terrain with occlusion on (-Dmcopt.metal.occ=true); see MetalRenderPass.recording. */
-	final MetalTerrain terrain;
 	private final ArrayDeque<Frame> inFlight = new ArrayDeque<>();
 	private List<Runnable> afterThisFrame = new ArrayList<>();
 	private final Set<MetalTexture> pendingClears = new HashSet<>();
@@ -114,7 +112,7 @@ final class MetalEncoder implements CommandEncoderBackend {
 	private final double[] profileAt = new double[4 * PROFILE_ENCODERS];
 	private final int[] profileAtN = new int[4 * PROFILE_ENCODERS];
 	private int profiledFrames;
-	private long waitNanos, statStart, statTerrainFrames;
+	private long waitNanos, statStart;
 	private int statFrames, statPresents;
 
 	private record Frame(long index, long cmd, List<Runnable> after) {
@@ -125,7 +123,6 @@ final class MetalEncoder implements CommandEncoderBackend {
 		this.enc = Native.encNew(ctx);
 		if (GPU_TIMES) GpuTimes.initialize();
 		this.transientMemory = new MetalTransientMemory(ctx, this);
-		this.terrain = new MetalTerrain(this);
 	}
 
 	boolean tracing() {
@@ -195,7 +192,6 @@ final class MetalEncoder implements CommandEncoderBackend {
 				sampleCount = MemoryUtil.memGetInt(count);
 			}
 		}
-		this.terrain.releaseHeld(true);
 		if (this.presentedThisSubmit && mcopt.metal.own.OwnProbe.bool("metal.frameDepthDiscard", FRAME_DEPTH_DISCARD)) {  // (in-run A/B: probe mode metal.frameDepthDiscard=true)
 			net.minecraft.client.renderer.GameRenderer game = net.minecraft.client.Minecraft.getInstance().gameRenderer;
 			GpuTexture depth = game != null ? game.mainRenderTarget().getDepthTexture() : null;
@@ -210,7 +206,6 @@ final class MetalEncoder implements CommandEncoderBackend {
 		} finally {
 			MetalEvents.end(commitEvent);
 		}
-		this.terrain.endFrame();
 		if (samples != 0) {
 			long s = samples;
 			int n = sampleCount;
@@ -253,12 +248,6 @@ final class MetalEncoder implements CommandEncoderBackend {
 		System.out.printf("mcopt-metal stats: %d fps, %.3f ms/frame, %.3f ms of it waiting on the GPU, %d presents%s%n", this.statFrames,
 			frameMs, this.waitNanos / 1e6 / this.statFrames, this.statPresents, (PRESENT_QUEUE ? " (queued" + (PRESENT_ACQUIRE ? ", acquired on the present side" : "") + "; skipped so far " + Native.presentSkipped() + ", dropped " + Native.presentDropped() + ")" : "")
 			+ (MetalSurface.PACE_ADAPT ? String.format(" (pace margin +%.2f ms learned)", Native.paceExtraMs()) : ""));
-		if (MetalTerrain.OCC) {
-			long[] t = this.terrain.lastCompletedCounts();
-			System.out.printf("mcopt-metal stats: terrain drew %d of %d quads (%.1f%%), %d before the split, %d chunks (%.1f quads each), %d frames drew terrain%n", t[0], t[1],
-				100.0 * t[0] / Math.max(1, t[1]), t[2], t[3], (double) t[1] / Math.max(1, t[3]), this.terrain.terrainFrames - this.statTerrainFrames);
-			this.statTerrainFrames = this.terrain.terrainFrames;
-		}
 		this.statStart = now;
 		this.statFrames = 0;
 		this.statPresents = 0;
@@ -610,14 +599,12 @@ final class MetalEncoder implements CommandEncoderBackend {
 		MetalEvents.Operation event = MetalEvents.begin("upload", this.submitIndex, data.remaining());
 		try {
 			MetalBuffer dst = (MetalBuffer) destination.buffer();
-			if (event != null) event.arena = dst.arena;
 			// A blit would end the open render encoder, and wait for every command before it that reads dst. A buffer the GPU isn't
 			// using can just be written, it is the same memory; one it is using can move to fresh memory if the write replaces all of it.
 			boolean whole = destination.offset() == 0 && data.remaining() == dst.size();
 			if (data.remaining() <= CPU_COPY_MAX && (this.idle(dst) || whole && dst.rename())) {
 				this.trace("writeToBuffer (cpu)", data.remaining());
 				MemoryUtil.memCopy(MemoryUtil.memAddress(data), dst.address + destination.offset(), data.remaining());
-				if (dst.arena) this.terrain.invalidate(dst, destination.offset(), data.remaining());
 				return;
 			}
 			this.trace("writeToBuffer", data.remaining());
@@ -628,15 +615,8 @@ final class MetalEncoder implements CommandEncoderBackend {
 		}
 	}
 
-	/** In a frame that splits, Sodium geometry copied before its culling waits for the split (see MetalTerrain.hold); the rest goes in order. */
 	private void blitBuffer(MetalBuffer src, long srcOffset, MetalBuffer dst, long dstOffset, long size) {
-		if (dst.arena && this.terrain.split && !this.terrain.culledThisFrame()) {
-			this.terrain.hold(src, srcOffset, dst, dstOffset, size);
-		} else {
-			if (src.arena || dst.arena) this.terrain.releaseHeld(false); // earlier arena copies land first
-			Native.blitBuffer(this.enc, src.handle, srcOffset, dst.handle, dstOffset, size);
-		}
-		if (dst.arena) this.terrain.invalidate(dst, dstOffset, size);
+		Native.blitBuffer(this.enc, src.handle, srcOffset, dst.handle, dstOffset, size);
 	}
 
 	@Override
@@ -648,12 +628,9 @@ final class MetalEncoder implements CommandEncoderBackend {
 		MetalEvents.Operation event = MetalEvents.begin("copy", this.submitIndex, source.length());
 		try {
 			MetalBuffer src = (MetalBuffer) source.buffer(), dst = (MetalBuffer) target.buffer();
-			if (event != null) event.arena = src.arena || dst.arena;
-			if (src.arena || dst.arena) MetalEvents.arenaTransfer("copy", source.length(), src.size(), dst.size());
 			if (source.length() <= CPU_COPY_MAX && src != dst && this.idle(src) && this.idle(dst)) {
 				this.trace("copyToBuffer (cpu)", source.length());
 				MemoryUtil.memCopy(src.address + source.offset(), dst.address + target.offset(), source.length());
-				if (dst.arena) this.terrain.invalidate(dst, target.offset(), source.length());
 				return;
 			}
 			this.trace("copyToBuffer", source.length());

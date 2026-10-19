@@ -20,7 +20,6 @@ final class MetalEvents {
 		@Label("Operation") String operation;
 		@Label("Submit") long submit;
 		@Label("Bytes") @jdk.jfr.DataAmount long bytes;
-		@Label("Arena") boolean arena;
 		@Label("Main command buffer GPU microseconds") double gpuMicros;
 	}
 
@@ -33,29 +32,6 @@ final class MetalEvents {
 		event.bytes = bytes;
 		event.begin();
 		return event;
-	}
-
-	@Name("mcopt.MetalArenaTransfer")
-	@Label("Metal arena transfer")
-	@Category("mcopt")
-	@StackTrace(true)
-	static final class ArenaTransfer extends Event {
-		String operation;
-		@jdk.jfr.DataAmount long bytes;
-		@jdk.jfr.DataAmount long sourceCapacity;
-		@jdk.jfr.DataAmount long destinationCapacity;
-	}
-
-	/** Fast-to-encode copies can still cause a later GPU wait. Keep their sizes even below the operation threshold. */
-	static void arenaTransfer(String operation, long bytes, long sourceCapacity, long destinationCapacity) {
-		if (!ENABLED) return;
-		ArenaTransfer event = new ArenaTransfer();
-		if (!event.isEnabled()) return;
-		event.operation = operation;
-		event.bytes = bytes;
-		event.sourceCapacity = sourceCapacity;
-		event.destinationCapacity = destinationCapacity;
-		event.commit();
 	}
 
 	static void end(Operation event) {

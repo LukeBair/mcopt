@@ -8,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import mcopt.metal.MetalBridge;
 import mcopt.metal.MetalHooks;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.fog.FogData;
@@ -38,7 +37,6 @@ import org.lwjgl.system.MemoryUtil;
 public final class Lod {
 	private static @Nullable Lod instance;
 	private static boolean failed;
-	private static final boolean SODIUM = FabricLoader.getInstance().isModLoaded("sodium");
 	private static final int MAX_LEVELS = 12;
 	/** ColFrame in columns.metal: A, B, C, cam, origin, cols, lines, screen, mask, maskDist (10 x 16) + 12 levels x 32. */
 	static final int COL_FRAME_BYTES = 10 * 16 + MAX_LEVELS * 32;
@@ -208,7 +206,7 @@ public final class Lod {
 		}
 	}
 
-	/** Whether Sodium's sections should appear without their fade-in (-Dmcopt.lod.fade=instant while far terrain draws). */
+	/** Whether sections should appear without their fade-in (-Dmcopt.lod.fade=instant while far terrain draws). */
 	public static boolean noSectionFade() {
 		return activeReach > 0;
 	}
@@ -410,13 +408,7 @@ public final class Lod {
 		int rd = mc.options.getEffectiveRenderDistance();
 		if (LodGenStats.ON) LodGenStats.frame(mc.level, w, this.camX, this.camZ, rd);
 		if (LodYield.ON) LodYield.frame(mc, this.camX, this.camZ, rd);
-		// (three standalone statements, no else: the indie export removes the first one)
-		if (!(HANDOFF_DRAWN && SODIUM) && (!mcopt.metal.own.OwnSeam.ON || !this.updateMaskOwn())) this.updateMask(mc, rd, this.frames % 8 == 1);
-		if (HANDOFF_DRAWN && SODIUM && CHUNK_HOLD) {
-			ClientLevel cl = mc.level;
-			w.hold = cl == null ? null : key -> this.heldInView((int) (key >> 32), (int) key, cl);
-			w.releaseHeld();
-		}
+		if (!mcopt.metal.own.OwnSeam.ON || !this.updateMaskOwn()) this.updateMask(mc, rd, this.frames % 8 == 1);
 		this.partNanos[2] += System.nanoTime() - t2;
 		boolean probeOn = this.probe(start);
 		if (!LodConfig.DRAW || !probeOn || !MetalBridge.inRenderPass(this.encoder)) {
@@ -1011,20 +1003,6 @@ public final class Lod {
 	 */
 	static final boolean HANDOFF_UNSEEN = Boolean.parseBoolean(System.getProperty("mcopt.lod.handoffUnseen", String.valueOf(LodConfig.SMALL)));
 
-	/**
-	 * -Dmcopt.lod.chunkHold=true (default with lod.small): a real chunk's rewrite of the coarser levels waits while the chunk is in
-	 * view and not handed off (LodField.applyChunk): at lod.small's n 512 level 1 meets the hand-off, and the rewrite would pop.
-	 */
-	static final boolean CHUNK_HOLD = Boolean.parseBoolean(System.getProperty("mcopt.lod.chunkHold", String.valueOf(LodConfig.SMALL)));
-
-	/** In this frame's mask window, not handed off, and in view (its column grown by 32 blocks meets the frustum). */
-	private boolean heldInView(int cx, int cz, ClientLevel level) {
-		int mx = cx - this.readyX, mz = cz - this.readyZ;
-		if (this.readyX == Integer.MIN_VALUE || mx < 0 || mz < 0 || mx >= this.readySize || mz >= this.readySize) return false;
-		if (this.handed[mz * MASK_MAX + mx]) return false;
-		return !this.unseen(cx * 16, cz * 16, level);
-	}
-
 	private boolean unseen(int ox, int oz, ClientLevel level) {
 		float g = 32;
 		return !this.frustum.testAab((float) (ox - this.camX) - g, (float) (level.getMinY() - this.camY), (float) (oz - this.camZ) - g,
@@ -1177,8 +1155,7 @@ public final class Lod {
 			this.statFrames, this.statCpuNanos / 1e6 / this.statFrames, this.lastColumns, this.lastR0, this.lastR1, w.needed, w.missing, w.generated.get(),
 			w.generated.get() == 0 ? 0 : w.genNanos.get() / 1e6 / w.generated.get(), w.loaded.get(), w.pendingJobs(), w.queued(), w.chunksSummarized.get(),
 			this.nearestFar, w.settled ? String.format("%.1fs", (w.settledNanos - w.startNanos) / 1e9) : "no",
-			(LodField.CHUNK_TILES ? String.format(", chunk tiles %d (generations skipped %d)", w.chunkTiles.get(), w.chunkSkipped.get()) : "")
-				+ (CHUNK_HOLD ? String.format(", chunks held %d (released %d)", w.heldCount(), w.heldReleased) : ""));
+			(LodField.CHUNK_TILES ? String.format(", chunk tiles %d (generations skipped %d)", w.chunkTiles.get(), w.chunkSkipped.get()) : ""));
 		StringBuilder gen = new StringBuilder();
 		for (int i = 0; i < 16; i++) {
 			long n = w.noise.stageNanos.get(i * 4 + 3);
