@@ -19,26 +19,57 @@ public final class Shade {
 	/** 1 normals, 2 shadow, 3 ao; 0 the lit picture. */
 	static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
 
-	/** Self-test: write the main target (before the GUI) to run/screenshots/NAME.png after this many frames (0 off), then once. Works with shade off too. */
+	/** Self-test: after the world has rendered for a while, write the main target (before the GUI) to run/screenshots/NAME_STEP.png once per step of mcopt.shade.shotSeq (comma list of off,on,d1,d2,d3), all in one launch. */
 	public static final int SHOT = Integer.getInteger("mcopt.shade.shot", 0);
 	static final String SHOT_NAME = System.getProperty("mcopt.shade.shotName", "shade");
-	private static int frames;
-	private static boolean shot;
+	static final String[] SEQ = System.getProperty("mcopt.shade.shotSeq", "on").split(",");
+	static final long SHOT_DELAY = Long.getLong("mcopt.shade.shotDelay", 20L);
+	/** The shade pass is skipped (the "off" step). */
+	public static boolean suppress;
+	/** Freeze the camera at this yaw/pitch while a shot sequence runs (yaw 999 = leave alone). */
+	static final float YAW = f("mcopt.shade.shotYaw", 56f), PITCH = f("mcopt.shade.shotPitch", 5f);
+	static int debugNow = DEBUG;
+	private static long t0, tStep;
+	private static int frames, step, pending = -1;
 
 	/** Called each level frame after the shade pass. */
 	public static void maybeShot(com.mojang.blaze3d.pipeline.RenderTarget main) {
-		if (SHOT <= 0 || shot || ++frames < SHOT) return;
-		shot = true;
+		if (SHOT <= 0 || step >= SEQ.length) return;
+		net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+		if (mc.player == null || mc.level == null) return;
+		if (YAW < 999f) {
+			mc.player.setYRot(YAW);
+			mc.player.setXRot(PITCH);
+			mc.player.yRotO = YAW;
+			mc.player.xRotO = PITCH;
+		}
+		long now = System.nanoTime();
+		if (++frames < SHOT) return;
+		if (t0 == 0) { t0 = now; apply(SEQ[0]); }
+		long wait = step == 0 ? SHOT_DELAY : 4;
+		if (tStep == 0) tStep = now;
+		if (now - tStep < wait * 1_000_000_000L) return;
+		String name = SEQ[step];
+		var p = mc.player;
+		System.out.println("[mcopt] shade: shot " + name + " at " + p.getX() + "," + p.getY() + "," + p.getZ() + " yaw " + p.getYRot() + " pitch " + p.getXRot());
+		int myStep = step++;
+		tStep = 0;
+		if (step < SEQ.length) apply(SEQ[step]);
 		net.minecraft.client.Screenshot.takeScreenshot(main, img -> {
 			try (img) {
 				java.nio.file.Path dir = java.nio.file.Path.of("screenshots");
 				java.nio.file.Files.createDirectories(dir);
-				img.writeToFile(dir.resolve(SHOT_NAME + ".png"));
-				System.out.println("[mcopt] shade: wrote " + dir.toAbsolutePath().resolve(SHOT_NAME + ".png"));
+				img.writeToFile(dir.resolve(SHOT_NAME + "_" + name + ".png"));
+				System.out.println("[mcopt] shade: wrote " + dir.toAbsolutePath().resolve(SHOT_NAME + "_" + name + ".png"));
 			} catch (java.io.IOException e) {
 				e.printStackTrace();
 			}
 		});
+	}
+
+	private static void apply(String name) {
+		suppress = name.equals("off");
+		debugNow = name.startsWith("d") ? Integer.parseInt(name.substring(1)) : 0;
 	}
 
 	private static final String[] SOURCES = {"post/shade.fsh", "post/shade_blit.fsh"};

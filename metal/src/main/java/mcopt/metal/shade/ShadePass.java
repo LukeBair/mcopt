@@ -36,7 +36,7 @@ public final class ShadePass {
 	private static RenderPipeline shade;
 	private static RenderPipeline blit;
 	private static GpuBuffer ubo;
-	private static boolean failed;
+	private static boolean failed, logged;
 
 	private ShadePass() {
 	}
@@ -69,7 +69,7 @@ public final class ShadePass {
 	}
 
 	public static void run(RenderTarget main, GraphicsResourceAllocator pool, CameraRenderState camera, SkyRenderState sky, float rain) {
-		if (failed || main.getDepthTextureView() == null) return;
+		if (failed || ShadeDepth.view() == null) return;
 		try {
 			if (shade == null) init();
 			apply(main, pool, camera, sky, rain);
@@ -86,6 +86,7 @@ public final class ShadePass {
 		proj.set(camera.projectionMatrix);
 		// Direction to the sun in world space (SkyRenderer: Y -90, X sunAngle on +Y), then into view space.
 		Vector3f sun = new Vector3f((float) -Math.sin(sky.sunAngle), (float) Math.cos(sky.sunAngle), 0f);
+		if (Shade.SHOT > 0 && !logged) { logged = true; System.out.println("[mcopt] shade: sunAngle " + sky.sunAngle + " rain " + rain); }
 		float day = smooth(-0.04f, 0.28f, sun.y) * (1f - rain);
 		camera.viewRotationMatrix.transformDirection(sun);
 
@@ -94,7 +95,7 @@ public final class ShadePass {
 				.putMat4f(proj).putMat4f(inv)
 				.putVec4(sun.x, sun.y, sun.z, day)
 				.putVec4(Shade.SHADOW, Shade.AO, Shade.GRADE, Shade.SHADOW_LEN)
-				.putVec4(Shade.DEBUG, Shade.AO_RADIUS, 1f / main.width, 1f / main.height)
+				.putVec4(Shade.debugNow, Shade.AO_RADIUS, 1f / main.width, 1f / main.height)
 				.get();
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), data);
 		}
@@ -110,7 +111,7 @@ public final class ShadePass {
 				RenderSystem.bindDefaultUniforms(pass);
 				pass.setUniform("ShadeInfo", ubo);
 				pass.setUniform("ColorSampler", main.getColorTextureView(), nearest);
-				pass.setUniform("DepthSampler", main.getDepthTextureView(), nearest);
+				pass.setUniform("DepthSampler", ShadeDepth.view(), nearest);
 				pass.draw(3, 1, 0, 0);
 			}
 			try (RenderPass pass = enc.createRenderPass(() -> "mcopt shade resolve", main.getColorTextureView(), Optional.empty(), null, OptionalDouble.empty())) {
