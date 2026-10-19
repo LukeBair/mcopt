@@ -173,6 +173,10 @@ final class MetalEncoder implements CommandEncoderBackend {
 	public void submit() {
 		if (this.currentPass != null) throw new IllegalStateException("Cannot submit inside a render pass");
 		this.trace("submit");
+		if (MetalTimestamps.SELFTEST) {
+			this.timestamp(MetalTimestamps.selfTestPool, 1, false);
+			if (this.tsSampling) this.tsPending.add(new MetalTimestamps.Request(MetalTimestamps.selfTestPool, 0, 0, false));
+		}
 		this.transientMemory.endSubmit();
 		long samples = 0;
 		int sampleCount = 0;
@@ -219,6 +223,10 @@ final class MetalEncoder implements CommandEncoderBackend {
 			int n = sampleCount;
 			boolean release = !userProfiled;  // sampled for the queries alone: nobody else reads (or releases) the samples
 			this.afterThisFrame.add(() -> MetalTimestamps.resolve(this.ctx, tsRequests, s, n, release, cmd));
+			if (MetalTimestamps.SELFTEST) {
+				long submit = this.submitIndex;
+				this.afterThisFrame.add(() -> MetalTimestamps.selfTestReport(this.ctx, submit, n, cmd));
+			}
 		} else if (samples != 0 && !userProfiled) {
 			long s = samples;
 			this.afterThisFrame.add(() -> Native.release(s));

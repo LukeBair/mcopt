@@ -24,6 +24,18 @@ final class MetalTimestamps {
 	/** Cleared if the device has no stage-boundary sampling. */
 	static volatile boolean sampling = true;
 
+	/** -Dmcopt.metal.gpuTimestamps.selftest=true (measurement only): writes a start and an end query around every submit and prints how they compare with the command buffer's GPU time. */
+	static final boolean SELFTEST = Boolean.getBoolean("mcopt.metal.gpuTimestamps.selftest");
+	static final Pool selfTestPool = SELFTEST ? new Pool(2) : null;
+
+	static void selfTestReport(long ctx, long submit, int samples, long cmd) {
+		if (submit % 120 != 0) return;
+		long a = selfTestPool.getValue(0).orElse(-1), b = selfTestPool.getValue(1).orElse(-1);
+		long age = b < 0 ? -1 : b + calibrationOffset(ctx) - System.nanoTime();
+		System.out.printf("mcopt-metal timestamps: submit %d samples %d queries %.3f ms, command buffer %.3f ms, end is %.2f ms from now, scale %.4f%n",
+			submit, samples, (b - a) / 1e6, Native.cmdGpuMicros(cmd) / 1000.0, age / 1e6, scale);
+	}
+
 	record Request(Pool pool, int index, int group, boolean inPass) {
 	}
 
