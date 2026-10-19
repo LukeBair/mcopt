@@ -20,15 +20,15 @@ import java.util.TreeMap;
  * </ul>
  * With no profile named anywhere, {@code indie} applies (our own renderer); {@code profile=none} applies no profile,
  * exactly the old no-profile behaviour (vanilla's renderer). If config/mcopt.properties is absent it is written with the effective profile ({@code indie}, or what -Dmcopt.profile names)
- * and comment lines on how to turn it off and how to try far terrain. For {@code alpha} on the small tier (GPU under
- * 10 cores, or 8 GB of RAM or less, or either unreadable) the keys in {@link #SMALL_OUT} are left out. It runs first in every mixin config plugin
+ * and comment lines on how to turn it off and how to try far terrain. The retired Sodium-era profiles ({@link #RETIRED}) apply
+ * {@code indie}. It runs first in every mixin config plugin
  * and in the preLaunch entrypoint, before any of our classes read a flag; the first call does the work, later calls
  * return at once.
  */
 public final class Profile {
 	private static boolean applied;
-	/** Alpha keys left out on the small tier: the 4096-entry clone cache costs memory an 8 GB / small-GPU Mac lacks. */
-	static final java.util.List<String> SMALL_OUT = java.util.List.of("mcopt.chunk.clones", "mcopt.chunk.clonesCleanup");
+	/** Profiles from the Sodium builds (no own renderer, Sodium-only keys): a config still naming one gets {@link #DEFAULT}. */
+	static final java.util.Set<String> RETIRED = java.util.Set.of("recommended", "alpha");
 	static final String DEFAULT = "indie";
 
 	private Profile() {
@@ -91,6 +91,10 @@ public final class Profile {
 		}
 		String name = System.getProperty("mcopt.profile", file.getProperty("profile", "")).trim();
 		if (name.isEmpty()) name = DEFAULT;
+		if (RETIRED.contains(name)) {
+			System.out.println("[mcopt] profile " + name + " was for the Sodium builds and is retired: using " + DEFAULT);
+			name = DEFAULT;
+		}
 		if (!Files.exists(cfg)) writeDefault(cfg, name); // first launch: record the effective profile (none stays none)
 		Map<String, String> flags = new TreeMap<>();
 		if (!name.isEmpty() && !name.equals("none")) {
@@ -105,7 +109,6 @@ public final class Profile {
 				System.out.println("[mcopt] profile " + name + ": " + e);
 			}
 			p.stringPropertyNames().forEach(k -> flags.put(k, p.getProperty(k).trim()));
-			if (name.equals("alpha")) tier(flags);
 		}
 		file.stringPropertyNames().stream().filter(k -> k.startsWith("mcopt.")).forEach(k -> flags.put(k, file.getProperty(k).trim()));
 		if (flags.isEmpty()) return;
@@ -122,18 +125,6 @@ public final class Profile {
 			+ (kept.isEmpty() ? "" : "; kept from the command line:" + kept));
 	}
 
-	/** Small tier: GPU cores < 10 or RAM <= 8 GB, or either unreadable. Logs the tier and drops {@link #SMALL_OUT}. */
-	private static void tier(Map<String, String> flags) {
-		int cores = gpuCores();
-		long mem = memBytes();
-		boolean small = cores < 10 || mem <= 8L << 30;
-		StringBuilder out = new StringBuilder();
-		if (small) for (String k : SMALL_OUT) if (flags.remove(k) != null) out.append(' ').append(k);
-		System.out.println("[mcopt] profile alpha: tier " + (small ? "small" : "full") + " (gpu cores "
-			+ (cores < 0 ? "unknown" : cores) + ", ram " + (mem < 0 ? "unknown" : String.format("%.1f GB", mem / (double) (1L << 30))) + ")"
-			+ (out.isEmpty() ? "" : "; left out:" + out));
-	}
-
 	private static int gpuCores = -2;
 
 	/** The GPU's core count from the IORegistry (AGXAccelerator "gpu-core-count"), -1 if unreadable; read once. */
@@ -144,14 +135,6 @@ public final class Profile {
 			gpuCores = m.find() ? Integer.parseInt(m.group(1)) : -1;
 		}
 		return gpuCores;
-	}
-
-	private static long memBytes() {
-		try {
-			return Long.parseLong(run("/usr/sbin/sysctl", "-n", "hw.memsize").trim());
-		} catch (NumberFormatException e) {
-			return -1;
-		}
 	}
 
 	private static String run(String... cmd) {
