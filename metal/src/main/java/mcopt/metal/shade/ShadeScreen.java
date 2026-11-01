@@ -58,6 +58,12 @@ public final class ShadeScreen extends OptionsSubScreen {
 				(caption, v) -> Options.genericValueLabel(Component.literal("Shadow refresh"), Component.literal(v == 1 ? "Every frame" : "Every " + v + " frames")),
 				new OptionInstance.IntRange(1, 16), Math.clamp(Shade.MAP_EVERY, 1, 16), v -> Shade.MAP_EVERY = v),
 			slider("Shadow distance", "Blocks around you that cast sun shadows. Shorter is sharper.", 32, 256, Shade.MAP_RADIUS, Shade::blocks, v -> Shade.MAP_RADIUS = (float) v),
+			OptionInstance.createBoolean("Wide soft shadows",
+				v -> Tooltip.create(Component.literal("Wide, filtered shadow edges (a little grainy). Off: solid shadows with a slightly soft edge, and faster.")),
+				Shade.SOFT, v -> Shade.SOFT = v),
+			OptionInstance.createBoolean("Half-res lighting",
+				v -> Tooltip.create(Component.literal("Shadows and ambient occlusion at half resolution, upsampled along edges. Much faster on big screens; off is a little crisper.")),
+				Shade.HALF, v -> Shade.HALF = v),
 			new OptionInstance<>("View", v -> Tooltip.create(Component.literal("Debug views of the shader's inputs.")),
 				(caption, v) -> Options.genericValueLabel(Component.literal("View"), Component.literal(VIEWS[v])),
 				new OptionInstance.Enum<>(List.of(0, 1, 2, 3), Codec.INT), Shade.debugNow, v -> Shade.debugNow = v));
@@ -88,6 +94,8 @@ public final class ShadeScreen extends OptionsSubScreen {
 		values.put("mcopt.shade.map", Boolean.toString(Shade.MAP));
 		values.put("mcopt.shade.mapRadius", num(Shade.MAP_RADIUS));
 		values.put("mcopt.shade.mapEvery", Integer.toString(Shade.MAP_EVERY));
+		values.put("mcopt.shade.half", Boolean.toString(Shade.HALF));
+		values.put("mcopt.shade.soft", Boolean.toString(Shade.SOFT));
 		save(FabricLoader.getInstance().getConfigDir().resolve("mcopt.properties"), values);
 	}
 

@@ -1,12 +1,14 @@
 #version 330
 #extension GL_ARB_separate_shader_objects : require
 
-// mcopt shade, stage 1: screen-space sun shadows, ambient occlusion and a gentle grade on the finished level image.
-// Reads the main target's colour and (reverse-Z) depth. Written for mcopt; see docs/SHADERS.md.
+// mcopt shade, stage 1: screen-space sun shadows, ambient occlusion and a gentle grade on the finished level image. The shadow and
+// ao come from shade_occ.fsh (usually at half res), upsampled here by depth so they don't bleed across edges. Reads the main target's
+// colour and (reverse-Z) depth. Written for mcopt; see docs/SHADERS.md.
 
 uniform sampler2D ColorSampler;
 uniform sampler2D DepthSampler;
-uniform sampler2D ShadowSampler;
+uniform sampler2D OccSampler;
+uniform sampler2D HandSampler;  // the main target's depth, which by now has the first-person hand in it
 
 layout(std140) uniform ShadeInfo {
     mat4 Proj;
@@ -17,6 +19,8 @@ layout(std140) uniform ShadeInfo {
     mat4 ShadowM;  // view space -> sun shadow map clip (reverse-Z depth)
     vec4 ShadowP;  // x map texel (blocks), y 1/resolution, z map valid, w depth range (blocks)
     vec4 Tint;     // rgb: light colour (sun or moon by time of day), a: strength
+    vec4 Occ;      // x full-res pixels per occlusion pixel, y vanilla render distance (blocks), zw occlusion target size
+    vec4 Opts;     // x wide soft shadows (1) or solid with a slightly soft edge (0)
 };
 
 layout(location = 0) in vec2 texCoord;
@@ -35,12 +39,6 @@ vec3 viewPosAt(vec2 uv, float d) {
     return p.xyz / p.w;
 }
 
-float hash12(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-}
-
 vec3 tonemap(vec3 c, float amount) {
     // Soft S-curve around mid grey plus a little saturation: keeps blacks and whites where vanilla has them.
     vec3 s = c * c * (3.0 - 2.0 * c);
@@ -50,40 +48,16 @@ vec3 tonemap(vec3 c, float amount) {
     return clamp(c, 0.0, 1.0);
 }
 
-// Sun shadow map lookup: PCF over a rotated Vogel disc, normal-offset and slope-scaled bias. Returns 0 lit .. 1 shadowed, and in
-// edge how far inside the map the point is (1 inside, 0 at its border) so the caller can fade into the screen-space fallback.
-float mapShadow(vec3 p, vec3 n, vec3 L, float jitter, out float edge) {
-    float cosT = clamp(dot(n, L), 0.05, 1.0);
-    float tanT = sqrt(1.0 - cosT * cosT) / cosT;
-    float texel = ShadowP.x;
-    // Normal offset grows with the slope, so grazing surfaces do not self-shadow.
-    vec3 q = p + n * texel * (2.0 + 2.0 * min(tanT, 3.0));
-    vec4 c = ShadowM * vec4(q, 1.0);
-    vec3 s = c.xyz / c.w;
-    vec2 uv = s.xy * 0.5 + 0.5;
-    edge = 1.0 - smoothstep(0.82, 0.98, max(abs(s.x), abs(s.y)));
-    if (edge <= 0.0 || s.z <= 0.0 || s.z >= 1.0) { edge = 0.0; return 0.0; }
-    float bias = (texel * (1.5 + 1.5 * min(tanT, 3.0))) / ShadowP.w;
-    float radius = ShadowP.y * 3.0;
-    float acc = 0.0;
-    const int N = 16;
-    float rot = jitter * 6.2831853;
-    // Four taps from the disc's outer ring first: when they agree (fully lit or fully shadowed, most of the screen) that's the
-    // answer, and only penumbra pixels pay for all sixteen.
-    for (int i = 12; i < N; i++) {
-        float r = sqrt((float(i) + 0.5) / float(N));
-        float a = rot + float(i) * 2.399963;
-        vec2 o = vec2(cos(a), sin(a)) * r * radius;
-        acc += (textureLod(ShadowSampler, uv + o, 0.0).r > s.z + bias) ? 1.0 : 0.0;
-    }
-    if (acc == 0.0 || acc == 4.0) return acc * 0.25;
-    for (int i = 0; i < 12; i++) {
-        float r = sqrt((float(i) + 0.5) / float(N));
-        float a = rot + float(i) * 2.399963;
-        vec2 o = vec2(cos(a), sin(a)) * r * radius;
-        acc += (textureLod(ShadowSampler, uv + o, 0.0).r > s.z + bias) ? 1.0 : 0.0;
-    }
-    return acc / float(N);
+// Normal from the smaller depth step on each axis (the "Normals" view only; shade_occ.fsh has its own).
+vec3 normalAt(vec2 uv, vec3 p, vec2 texel) {
+    vec3 pl = viewPosAt(uv - vec2(texel.x, 0.0), textureLod(DepthSampler, uv - vec2(texel.x, 0.0), 0.0).r);
+    vec3 pr = viewPosAt(uv + vec2(texel.x, 0.0), textureLod(DepthSampler, uv + vec2(texel.x, 0.0), 0.0).r);
+    vec3 pu = viewPosAt(uv + vec2(0.0, texel.y), textureLod(DepthSampler, uv + vec2(0.0, texel.y), 0.0).r);
+    vec3 pd = viewPosAt(uv - vec2(0.0, texel.y), textureLod(DepthSampler, uv - vec2(0.0, texel.y), 0.0).r);
+    vec3 ex = abs(pr.z - p.z) < abs(p.z - pl.z) ? pr - p : p - pl;
+    vec3 ey = abs(pu.z - p.z) < abs(p.z - pd.z) ? pu - p : p - pd;
+    vec3 n = normalize(cross(ex, ey));
+    return dot(n, p) > 0.0 ? -n : n;
 }
 
 void main() {
@@ -92,91 +66,40 @@ void main() {
     vec2 texel = Params1.zw;
     float d0;
     float z0 = viewDepthAt(texCoord, d0);
+    // The hand and held item are drawn into the main colour after the level depth was copied, their depth merged into the main
+    // depth: where that differs from the copy, leave the pixel unshaded, or the terrain behind would show through the item.
+    float hd = textureLod(HandSampler, texCoord, 0.0).r;
+    if (hd > 0.0 && hd != d0) d0 = 0.0;
     int debug = int(Params1.x + 0.5);
 
-    float shadow = 0.0;
-    float ao = 0.0;
-    float lit = 0.0;
+    vec3 occ = vec3(0.0);
     vec3 n = vec3(0.0, 1.0, 0.0);
-
     if (d0 > 0.0) {
-        vec3 p = viewPosAt(texCoord, d0);
-
-        // Normal from the smaller depth step on each axis, so silhouettes don't smear it.
-        vec3 pl = viewPosAt(texCoord - vec2(texel.x, 0.0), textureLod(DepthSampler, texCoord - vec2(texel.x, 0.0), 0.0).r);
-        vec3 pr = viewPosAt(texCoord + vec2(texel.x, 0.0), textureLod(DepthSampler, texCoord + vec2(texel.x, 0.0), 0.0).r);
-        vec3 pu = viewPosAt(texCoord + vec2(0.0, texel.y), textureLod(DepthSampler, texCoord + vec2(0.0, texel.y), 0.0).r);
-        vec3 pd = viewPosAt(texCoord - vec2(0.0, texel.y), textureLod(DepthSampler, texCoord - vec2(0.0, texel.y), 0.0).r);
-        vec3 ex = abs(pr.z - p.z) < abs(p.z - pl.z) ? pr - p : p - pl;
-        vec3 ey = abs(pu.z - p.z) < abs(p.z - pd.z) ? pu - p : p - pd;
-        n = normalize(cross(ex, ey));
-        if (dot(n, p) > 0.0) n = -n;
-
-        float dist = length(p);
-        lit = smoothstep(-0.1, 0.35, dot(n, normalize(Sun.xyz)));
-        float jitter = hash12(gl_FragCoord.xy);
-
-        // Shadow: the sun map where it covers, with the screen-space march kept as fine contact detail (and as the fallback outside it).
-        float day = Sun.w;
-        vec3 L = normalize(Sun.xyz);
-        float facing = smoothstep(-0.1, 0.35, dot(n, L));
-        // Faces turned from the sun are left to vanilla's face shading (facing 0), so they skip both lookups.
-        if (Params0.x > 0.0 && day > 0.0 && facing > 0.0) {
-            float edge = 0.0;
-            float mapS = 0.0;
-            bool useMap = ShadowP.z > 0.5;
-            if (useMap) mapS = mapShadow(p, n, L, jitter, edge);
-            // Inside the map and fully shadowed already: the contact march can't change the result.
-            bool march = !(useMap && mapS * edge >= 1.0);
-            float len = useMap ? min(Params0.w, 3.0) : Params0.w;
-            const int STEPS = 20;
-            float stepLen = len / float(STEPS);
-            vec3 o = p + n * (0.02 + dist * 0.0015);
-            float hit = 0.0;
-            for (int i = 0; march && i < STEPS; i++) {
-                float t = (float(i) + 0.5 + jitter) * stepLen;
-                // Steps grow with distance so short and long casters are both found.
-                t = t * (0.35 + 0.65 * float(i + 1) / float(STEPS)) * 1.6;
-                vec3 q = o + L * t;
-                if (q.z > -0.05) break;
-                vec4 c = Proj * vec4(q, 1.0);
-                vec2 uv = c.xy / c.w * 0.5 + 0.5;
-                if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
-                float dd2;
-                float sz = viewDepthAt(uv, dd2);
-                if (dd2 <= 0.0) continue; // sky
-                float diff = sz - q.z; // > 0: the scene is closer to the camera than the ray point
-                float thick = 0.25 + t * 0.35;
-                if (diff > 0.03 && diff < thick) { hit = 1.0; break; }
-            }
-            float s = useMap ? max(mapS * edge + hit * (1.0 - edge), hit * 0.6) : hit;
-            shadow = s * facing * day * (useMap ? 1.0 : 1.0 - smoothstep(60.0, 160.0, dist));
+        // Bilateral upsample: the four nearest occlusion pixels, bilinear weights scaled down by how far each one's depth is from ours.
+        vec2 pos = floor(texCoord / texel) / Occ.x;
+        vec2 base = floor(pos), f = pos - base;
+        float wsum = 0.0, best = 1e9;
+        vec3 sum = vec3(0.0), nearest = vec3(0.0);
+        float tol = 0.03 * abs(z0) + 0.05;
+        for (int i = 0; i < 4; i++) {
+            vec2 o = vec2(float(i & 1), float(i >> 1));
+            vec2 h = min(base + o, Occ.zw - 1.0);
+            float dh;
+            float zh = viewDepthAt((h * Occ.x + 0.5) * texel, dh);
+            if (dh <= 0.0) continue;
+            vec3 v = textureLod(OccSampler, (h + 0.5) / Occ.zw, 0.0).rgb;
+            float dz = abs(zh - z0);
+            if (dz < best) { best = dz; nearest = v; }
+            vec2 b = mix(1.0 - f, f, o);
+            float w = b.x * b.y * exp(-dz / tol);
+            sum += v * w;
+            wsum += w;
         }
-
-        // Ambient occlusion: a ring of samples in view space, tested against the surface tangent plane.
-        if (Params0.y > 0.0) {
-            float radius = Params1.y;
-            float acc = 0.0;
-            float rot = jitter * 6.2831853;
-            const int AO_N = 10;
-            for (int i = 0; i < AO_N; i++) {
-                float a = rot + float(i) * 2.399963;
-                float r = (float(i) + 0.5) / float(AO_N);
-                vec2 off = vec2(cos(a), sin(a)) * r * r;
-                // radius in blocks -> uv offset at this depth
-                vec2 uv = texCoord + off * radius / max(-p.z, 0.5) * vec2(Proj[0][0], Proj[1][1]) * 0.5;
-                float sd;
-                float sz = viewDepthAt(uv, sd);
-                if (sd <= 0.0) continue;
-                vec3 sp = viewPosAt(uv, sd);
-                vec3 v = sp - p;
-                float vl = length(v);
-                float occ = max(dot(n, v) / max(vl, 1e-4) - 0.12, 0.0);
-                acc += occ * (1.0 - smoothstep(radius * 0.6, radius * 2.0, vl));
-            }
-            ao = clamp(acc / float(AO_N) * 2.2, 0.0, 1.0) * (1.0 - smoothstep(48.0, 128.0, dist));
-        }
+        // No neighbour on our surface (a thin edge): the closest one in depth.
+        occ = wsum > 1e-3 ? sum / wsum : nearest;
+        if (debug == 1) n = normalAt(texCoord, viewPosAt(texCoord, d0), texel);
     }
+    float shadow = occ.r, ao = occ.g, lit = occ.b;
 
     if (debug == 1) { fragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
     if (debug == 2) { fragColor = vec4(vec3(1.0 - shadow), 1.0); return; }

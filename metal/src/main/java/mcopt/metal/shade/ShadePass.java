@@ -29,11 +29,13 @@ import org.joml.Vector3f;
 import org.lwjgl.system.MemoryStack;
 
 /**
- * Stage 1 of mcopt's built-in shaders: one full-screen pass (screen-space sun shadows, ambient occlusion, grade) over the
- * finished level image into a scratch target, and a copy back. Runs from GameRenderer.applyPostEffects' tail.
+ * Stage 1 of mcopt's built-in shaders over the finished level image: the shadow / ambient occlusion pass into a (by default half-res)
+ * target, then a full-screen pass that upsamples it, applies it and grades into a scratch target, and a copy back. Runs from
+ * GameRenderer.applyPostEffects' tail.
  */
 public final class ShadePass {
-	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().get();
+	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().get();
+	private static RenderPipeline occ;
 	private static RenderPipeline shade;
 	private static RenderPipeline blit;
 	private static GpuBuffer ubo;
@@ -44,13 +46,26 @@ public final class ShadePass {
 	}
 
 	private static void init() {
-		BindGroupLayout inputs = BindGroupLayout.builder()
-			.withUniform("ColorSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+		BindGroupLayout occInputs = BindGroupLayout.builder()
 			.withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("ShadowSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("ShadeInfo", UniformType.UNIFORM_BUFFER)
 			.build();
+		BindGroupLayout inputs = BindGroupLayout.builder()
+			.withUniform("ColorSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+			.withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+			.withUniform("OccSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+			.withUniform("HandSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+			.withUniform("ShadeInfo", UniformType.UNIFORM_BUFFER)
+			.build();
 		BindGroupLayout blitInputs = BindGroupLayout.builder().withUniform("ColorSampler", UniformType.COMBINED_IMAGE_SAMPLER).build();
+		occ = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+			.withLocation(Identifier.fromNamespaceAndPath("mcopt", "pipeline/shade_occ"))
+			.withVertexShader(Identifier.withDefaultNamespace("core/screenquad"))
+			.withFragmentShader(Identifier.fromNamespaceAndPath("mcopt", "post/shade_occ"))
+			.withBindGroupLayout(occInputs)
+			.withColorTargetState(ColorTargetState.DEFAULT)
+			.build();
 		shade = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
 			.withLocation(Identifier.fromNamespaceAndPath("mcopt", "pipeline/shade"))
 			.withVertexShader(Identifier.withDefaultNamespace("core/screenquad"))
@@ -66,7 +81,7 @@ public final class ShadePass {
 			.withColorTargetState(ColorTargetState.DEFAULT)
 			.build();
 		ubo = RenderSystem.getDevice().createBuffer(() -> "mcopt shade info", 136, UBO_SIZE);
-		if (RenderSystem.getCompiledPipelineNullable(shade) == null || RenderSystem.getCompiledPipelineNullable(blit) == null) {
+		if (RenderSystem.getCompiledPipelineNullable(occ) == null || RenderSystem.getCompiledPipelineNullable(shade) == null || RenderSystem.getCompiledPipelineNullable(blit) == null) {
 			throw new IllegalStateException("mcopt shade: pipeline did not compile");
 		}
 	}
@@ -102,6 +117,10 @@ public final class ShadePass {
 
 		GpuTextureView shadowView = ShadeShadow.view();
 		Matrix4f shadowM = new Matrix4f(ShadeShadow.CLIP).mul(camera.viewRotationMatrix.invert(new Matrix4f()));
+		int scale = Shade.HALF ? 2 : 1;
+		int ow = (main.width + scale - 1) / scale, oh = (main.height + scale - 1) / scale;
+		net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+		float vanilla = mc.options.getEffectiveRenderDistance() * 16f;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			ByteBuffer data = Std140Builder.onStack(stack, UBO_SIZE)
 				.putMat4f(proj).putMat4f(inv)
@@ -111,23 +130,37 @@ public final class ShadePass {
 				.putMat4f(shadowM)
 				.putVec4(2f * Shade.MAP_RADIUS / Shade.MAP_RES, 1f / Shade.MAP_RES, shadowView != null ? 1f : 0f, ShadeShadow.RANGE)
 				.putVec4(tr, tg, tb, tint)
+				.putVec4(scale, vanilla, ow, oh)
+				.putVec4(Shade.SOFT ? 1f : 0f, 0f, 0f, 0f)
 				.get();
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), data);
 		}
 
 		RenderTargetDescriptor desc = new RenderTargetDescriptor(main.width, main.height,
 			new RenderTargetDescriptor.TextureProperties(null, GpuFormat.RGBA8_UNORM), null);
+		RenderTargetDescriptor occDesc = new RenderTargetDescriptor(ow, oh,
+			new RenderTargetDescriptor.TextureProperties(null, GpuFormat.RGBA8_UNORM), null);
 		RenderTarget scratch = pool.acquire(desc);
+		RenderTarget occTarget = pool.acquire(occDesc);
 		try {
 			CommandEncoder enc = RenderSystem.getDevice().createCommandEncoder();
 			GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+			try (RenderPass pass = enc.createRenderPass(() -> "mcopt shade occlusion", occTarget.getColorTextureView(), Optional.empty(), null, OptionalDouble.empty())) {
+				pass.setPipeline(RenderSystem.getCompiledPipeline(occ));
+				RenderSystem.bindDefaultUniforms(pass);
+				pass.setUniform("ShadeInfo", ubo);
+				pass.setUniform("DepthSampler", ShadeDepth.view(), nearest);
+				pass.setUniform("ShadowSampler", shadowView != null ? shadowView : ShadeDepth.view(), nearest);
+				pass.draw(3, 1, 0, 0);
+			}
 			try (RenderPass pass = enc.createRenderPass(() -> "mcopt shade", scratch.getColorTextureView(), Optional.empty(), null, OptionalDouble.empty())) {
 				pass.setPipeline(RenderSystem.getCompiledPipeline(shade));
 				RenderSystem.bindDefaultUniforms(pass);
 				pass.setUniform("ShadeInfo", ubo);
 				pass.setUniform("ColorSampler", main.getColorTextureView(), nearest);
 				pass.setUniform("DepthSampler", ShadeDepth.view(), nearest);
-				pass.setUniform("ShadowSampler", shadowView != null ? shadowView : ShadeDepth.view(), nearest);
+				pass.setUniform("OccSampler", occTarget.getColorTextureView(), nearest);
+				pass.setUniform("HandSampler", main.getDepthTextureView(), nearest);
 				pass.draw(3, 1, 0, 0);
 			}
 			try (RenderPass pass = enc.createRenderPass(() -> "mcopt shade resolve", main.getColorTextureView(), Optional.empty(), null, OptionalDouble.empty())) {
@@ -137,6 +170,7 @@ public final class ShadePass {
 				pass.draw(3, 1, 0, 0);
 			}
 		} finally {
+			pool.release(occDesc, occTarget);
 			pool.release(desc, scratch);
 		}
 	}

@@ -28,6 +28,10 @@ public final class Shade {
 		return level.dimensionType().hasSkyLight();
 	}
 
+	/** Shadows and ambient occlusion at half resolution (upsampled by depth): about a quarter of their cost. */
+	static boolean HALF = Boolean.parseBoolean(System.getProperty("mcopt.shade.half", "true"));
+	/** Wide soft shadow edges (16-tap filter, a little grainy) instead of solid shadows with a slightly soft edge (4 lookups). */
+	static boolean SOFT = Boolean.getBoolean("mcopt.shade.soft");
 	/** Sun / moon light colour by time of day, 0..1. */
 	static float LIGHT = f("mcopt.shade.light", 0.8f);
 	/** 1 normals, 2 shadow, 3 ao; 0 the lit picture. */
@@ -105,7 +109,7 @@ public final class Shade {
 		debugNow = name.startsWith("d") ? Integer.parseInt(name.substring(1)) : 0;
 	}
 
-	private static final String[] SOURCES = {"post/shade.fsh", "post/shade_blit.fsh"};
+	private static final String[] SOURCES = {"post/shade.fsh", "post/shade_occ.fsh", "post/shade_blit.fsh"};
 
 	/** The listing of shader files with mcopt's own added (see ShadeShaderManagerMixin). */
 	public static java.util.Map<net.minecraft.resources.Identifier, net.minecraft.server.packs.resources.Resource> addSources(
@@ -134,6 +138,8 @@ public final class Shade {
 		MAP_RADIUS = 128f;
 		MAP_EVERY = 6;
 		LIGHT = 0.8f;
+		HALF = true;
+		SOFT = false;
 		debugNow = 0;
 		enabled = true;
 	}

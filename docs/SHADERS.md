@@ -12,6 +12,15 @@ an on/off switch, a debug view picker and Reset to defaults. Closing the screen 
 Shadow map resolution (`mcopt.shade.mapRes`) is launch-only.
 `mcopt.shade.mapEvery` (default 6, "Shadow refresh" in the menu): the shadow map is reused between redraws, and redrawn when the
 camera moves a block, the sun moves ~0.06 degrees, or after that many frames, so block edits can show in the shadows a few frames late.
+`mcopt.shade.half` (default true, "Half-res lighting" in the menu): shadows and AO are worked out at half resolution in
+`shade_occ.fsh`, then `shade.fsh` upsamples them by depth (the four nearest half-res pixels, weighted by how close their depth is
+to the pixel's, so they don't bleed across edges), applies them and grades. Off runs the same two passes at full resolution.
+`mcopt.shade.soft` (default false, "Wide soft shadows" in the menu): by default sun shadows are solid with a slightly soft edge
+(four shadow map lookups on a 1.5-texel grid, blended bilinearly: about 0.2 blocks of ramp, no noise); on is the old 16-tap rotated
+disc, wider and a little grainy. With it off the contact march is unjittered too, so shadows have no speckle.
+Only mcopt's / vanilla's own terrain is shaded: Distant Horizons writes its LODs into the colour without depth, so they read as
+sky, and the effects also fade out over the last chunk of the render distance. The first-person hand and held item are drawn after
+the level depth is copied, so the composite reads the main depth (which by then holds only the hand) and leaves those pixels unshaded.
 
 Measured at 3024x1898 (dev client, frozen camera, Metal System Trace): the shade pass is the frame's biggest cost, about 3.5 ms
 median against about 1.8 ms for the rest of the frame's fragment work. Skipping the lookups on faces turned from the sun and the
