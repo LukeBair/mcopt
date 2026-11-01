@@ -10,8 +10,10 @@ is vanilla's. Add `-Dmcopt.shade=false` on the command line to override a config
 In game: Video Settings > **mcopt Shaders...** (or Mod Menu's configure button) has every setting below as a slider that applies live,
 an on/off switch, a debug view picker and Reset to defaults. Closing the screen writes the values to `config/mcopt.properties`.
 Shadow map resolution (`mcopt.shade.mapRes`) is launch-only.
-`mcopt.shade.mapEvery` (default 6, "Shadow refresh" in the menu): the shadow map is reused between redraws, and redrawn when the
-camera moves a block, the sun moves ~0.06 degrees, or after that many frames, so block edits can show in the shadows a few frames late.
+`mcopt.shade.mapEvery` (default 6, "Shadow refresh" in the menu): shadow maps are reused between redraws, one refreshed every that
+many frames (or when the camera has moved 4 blocks), so block edits can show in the shadows a few frames late. The maps are only
+drawn at sun angles in steps of 0.015 rad, and the two either side of the real angle are crossfaded: drawing at the exact angle
+turned the map's texel grid a little with every redraw, and shadow edges and leaf cutouts flickered as the sun moved.
 `mcopt.shade.half` (default true, "Half-res lighting" in the menu): shadows and AO are worked out at half resolution in
 `shade_occ.fsh`, then `shade.fsh` upsamples them by depth (the four nearest half-res pixels, weighted by how close their depth is
 to the pixel's, so they don't bleed across edges), applies them and grades. Off runs the same two passes at full resolution.
@@ -21,6 +23,22 @@ disc, wider and a little grainy. With it off the contact march is unjittered too
 Only mcopt's / vanilla's own terrain is shaded: Distant Horizons writes its LODs into the colour without depth, so they read as
 sky, and the effects also fade out over the last chunk of the render distance. The first-person hand and held item are drawn after
 the level depth is copied, so the composite reads the main depth (which by then holds only the hand) and leaves those pixels unshaded.
+
+`mcopt.shade.clouds` (default true, "Stylized clouds"; follows Video Settings' clouds on/off) replaces vanilla's cloud mesh
+(ShadeCloudRendererMixin) with clouds ray-marched in the composite from vanilla's `clouds.png` (so resource packs apply), 12-block
+cells drifting at vanilla's speed. ShadeClouds turns the map into a texture: r cover, g density (share of cloud in the 7x7 cells
+around), b type (a slow random field: flat stratus regions, ordinary cumulus, towering cumulus). Columns grow with density and type in
+2-block steps, so they stay blocky; the shading uses the density blended between cells, so tones don't step per cell. Coverage is
+optical depth (path through the columns times density): grazing edges are see-through, thick cores opaque. Light follows the time of
+day (warm and rosy at dawn and dusk, rim highlights, silver lining toward the sun). Rain thickens and lowers them, spreads coverage,
+greys them and drops the sun highlights. They cast soft shadows on sunlit terrain (gone in rain, when the sky's all overcast).
+`mcopt.shade.cloudDist` (default 640, "Cloud distance") is how far they reach. About 3.5% of sunrises and sunsets are vivid (a hashed
+roll per event, steady for its length): deeper orange into pink in the light, the clouds and the sky near the horizon.
+`-Dmcopt.shade.forceVivid=true` makes them all vivid, for testing.
+`mcopt.shade.blockLight` (default 0.6, "Light colours"): ShadeLights finds the 32 light-emitting blocks nearest the camera every 20
+frames, each with a hue (torch warm, soul fire and sea lanterns cool, redstone red, amethyst violet, else the block's map colour), and
+the composite shifts the colour of what they light toward it, where the sun isn't the main light. No occlusion: it's a tint.
+Under water (camera in water) the composite mutes and tints colours blue-green and adds distance fog, darker at night.
 
 Measured at 3024x1898 (dev client, frozen camera, Metal System Trace): the shade pass is the frame's biggest cost, about 3.5 ms
 median against about 1.8 ms for the rest of the frame's fragment work. Skipping the lookups on faces turned from the sun and the

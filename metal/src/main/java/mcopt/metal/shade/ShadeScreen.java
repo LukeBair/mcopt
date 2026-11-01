@@ -58,6 +58,11 @@ public final class ShadeScreen extends OptionsSubScreen {
 				(caption, v) -> Options.genericValueLabel(Component.literal("Shadow refresh"), Component.literal(v == 1 ? "Every frame" : "Every " + v + " frames")),
 				new OptionInstance.IntRange(1, 16), Math.clamp(Shade.MAP_EVERY, 1, 16), v -> Shade.MAP_EVERY = v),
 			slider("Shadow distance", "Blocks around you that cast sun shadows. Shorter is sharper.", 32, 256, Shade.MAP_RADIUS, Shade::blocks, v -> Shade.MAP_RADIUS = (float) v),
+			slider("Light colours", "How strongly lit blocks (sea lanterns, torches, soul fire...) tint what's around them with their own hue.", 0, 1, Shade.BLOCK_LIGHT, Shade::pct, v -> Shade.BLOCK_LIGHT = (float) v),
+			OptionInstance.createBoolean("Stylized clouds",
+				v -> Tooltip.create(Component.literal("Taller, blocky clouds shaded by their density, lit by the time of day. Off: vanilla's clouds.")),
+				Shade.CLOUDS, v -> Shade.CLOUDS = v),
+			slider("Cloud distance", "How far the stylized clouds reach, in blocks.", 128, 1536, Shade.CLOUD_DIST, Shade::blocks, v -> Shade.CLOUD_DIST = (float) v),
 			OptionInstance.createBoolean("Wide soft shadows",
 				v -> Tooltip.create(Component.literal("Wide, filtered shadow edges (a little grainy). Off: solid shadows with a slightly soft edge, and faster.")),
 				Shade.SOFT, v -> Shade.SOFT = v),
@@ -96,6 +101,9 @@ public final class ShadeScreen extends OptionsSubScreen {
 		values.put("mcopt.shade.mapEvery", Integer.toString(Shade.MAP_EVERY));
 		values.put("mcopt.shade.half", Boolean.toString(Shade.HALF));
 		values.put("mcopt.shade.soft", Boolean.toString(Shade.SOFT));
+		values.put("mcopt.shade.clouds", Boolean.toString(Shade.CLOUDS));
+		values.put("mcopt.shade.cloudDist", num(Shade.CLOUD_DIST));
+		values.put("mcopt.shade.blockLight", num(Shade.BLOCK_LIGHT));
 		save(FabricLoader.getInstance().getConfigDir().resolve("mcopt.properties"), values);
 	}
 

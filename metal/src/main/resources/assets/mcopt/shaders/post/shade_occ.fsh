@@ -6,6 +6,7 @@
 
 uniform sampler2D DepthSampler;
 uniform sampler2D ShadowSampler;
+uniform sampler2D ShadowSampler2;
 
 layout(std140) uniform ShadeInfo {
     mat4 Proj;
@@ -17,7 +18,14 @@ layout(std140) uniform ShadeInfo {
     vec4 ShadowP;  // x map texel (blocks), y 1/resolution, z map valid, w depth range (blocks)
     vec4 Tint;     // rgb: light colour (sun or moon by time of day), a: strength
     vec4 Occ;      // x full-res pixels per occlusion pixel, y vanilla render distance (blocks), zw occlusion target size
-    vec4 Opts;     // x wide soft shadows (1) or solid with a slightly soft edge (0)
+    vec4 Opts;     // x wide soft shadows (1) or solid with a slightly soft edge (0), y shadow map blend
+    mat4 ViewInv;  // view space -> world space rotation
+    vec4 CloudP;   // x stylized clouds on, y cloud base height (world y), z reach (blocks), w sun height 0 (down) .. 1 (up)
+    vec4 CloudO;   // x, z the camera's place on the cloud map (blocks, wrapped), y camera world y, w map cells per side
+    vec4 CloudCol; // vanilla's cloud colour for the time and weather (rgb, a)
+    vec4 LightP;   // x coloured lights in ShadeLights, y their strength, z camera under water (1), w daylight under water 0..1
+    mat4 ShadowM2; // view space -> the second shadow map (the sun angle step above ShadowM's); Opts.y blends toward it
+    vec4 CloudX;   // x rain 0..1, y vivid sunrise/sunset (1, rare)
 };
 
 layout(location = 0) in vec2 texCoord;
@@ -42,15 +50,17 @@ float hash12(vec2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
+#define SMAP(uv, l) (which == 0 ? textureLod(ShadowSampler, uv, l) : textureLod(ShadowSampler2, uv, l))
+
 // Sun shadow map lookup: PCF over a rotated Vogel disc, normal-offset and slope-scaled bias. Returns 0 lit .. 1 shadowed, and in
 // edge how far inside the map the point is (1 inside, 0 at its border) so the caller can fade into the screen-space fallback.
-float mapShadow(vec3 p, vec3 n, vec3 L, float jitter, out float edge) {
+float mapShadow(int which, vec3 p, vec3 n, vec3 L, float jitter, out float edge) {
     float cosT = clamp(dot(n, L), 0.05, 1.0);
     float tanT = sqrt(1.0 - cosT * cosT) / cosT;
     float texel = ShadowP.x;
     // Normal offset grows with the slope, so grazing surfaces do not self-shadow.
     vec3 q = p + n * texel * (2.0 + 2.0 * min(tanT, 3.0));
-    vec4 c = ShadowM * vec4(q, 1.0);
+    vec4 c = (which == 0 ? ShadowM : ShadowM2) * vec4(q, 1.0);
     vec3 s = c.xyz / c.w;
     vec2 uv = s.xy * 0.5 + 0.5;
     edge = 1.0 - smoothstep(0.82, 0.98, max(abs(s.x), abs(s.y)));
@@ -63,10 +73,10 @@ float mapShadow(vec3 p, vec3 n, vec3 L, float jitter, out float edge) {
         vec2 g = uv / step - 0.5;
         vec2 f = fract(g);
         vec2 c = (floor(g) + 0.5) * step;
-        float s00 = (textureLod(ShadowSampler, c, 0.0).r > s.z + bias) ? 1.0 : 0.0;
-        float s10 = (textureLod(ShadowSampler, c + vec2(step, 0.0), 0.0).r > s.z + bias) ? 1.0 : 0.0;
-        float s01 = (textureLod(ShadowSampler, c + vec2(0.0, step), 0.0).r > s.z + bias) ? 1.0 : 0.0;
-        float s11 = (textureLod(ShadowSampler, c + vec2(step), 0.0).r > s.z + bias) ? 1.0 : 0.0;
+        float s00 = (SMAP(c, 0.0).r > s.z + bias) ? 1.0 : 0.0;
+        float s10 = (SMAP(c + vec2(step, 0.0), 0.0).r > s.z + bias) ? 1.0 : 0.0;
+        float s01 = (SMAP(c + vec2(0.0, step), 0.0).r > s.z + bias) ? 1.0 : 0.0;
+        float s11 = (SMAP(c + vec2(step), 0.0).r > s.z + bias) ? 1.0 : 0.0;
         return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
     }
     float radius = ShadowP.y * 3.0;
@@ -79,14 +89,14 @@ float mapShadow(vec3 p, vec3 n, vec3 L, float jitter, out float edge) {
         float r = sqrt((float(i) + 0.5) / float(N));
         float a = rot + float(i) * 2.399963;
         vec2 o = vec2(cos(a), sin(a)) * r * radius;
-        acc += (textureLod(ShadowSampler, uv + o, 0.0).r > s.z + bias) ? 1.0 : 0.0;
+        acc += (SMAP(uv + o, 0.0).r > s.z + bias) ? 1.0 : 0.0;
     }
     if (acc == 0.0 || acc == 4.0) return acc * 0.25;
     for (int i = 0; i < 12; i++) {
         float r = sqrt((float(i) + 0.5) / float(N));
         float a = rot + float(i) * 2.399963;
         vec2 o = vec2(cos(a), sin(a)) * r * radius;
-        acc += (textureLod(ShadowSampler, uv + o, 0.0).r > s.z + bias) ? 1.0 : 0.0;
+        acc += (SMAP(uv + o, 0.0).r > s.z + bias) ? 1.0 : 0.0;
     }
     return acc / float(N);
 }
@@ -132,7 +142,15 @@ void main() {
             float edge = 0.0;
             float mapS = 0.0;
             bool useMap = ShadowP.z > 0.5;
-            if (useMap) mapS = mapShadow(p, n, L, jitter, edge);
+            if (useMap) {
+                // Two maps at fixed sun angles either side of the real one, crossfaded (ShadeShadow): no flicker as the sun moves.
+                mapS = mapShadow(0, p, n, L, jitter, edge);
+                if (Opts.y > 0.001) {
+                    float edge2;
+                    mapS = mix(mapS, mapShadow(1, p, n, L, jitter, edge2), Opts.y);
+                    edge = min(edge, edge2);
+                }
+            }
             // Inside the map and fully shadowed already: the contact march can't change the result.
             bool march = !(useMap && mapS * edge >= 1.0);
             float len = useMap ? min(Params0.w, 3.0) : Params0.w;

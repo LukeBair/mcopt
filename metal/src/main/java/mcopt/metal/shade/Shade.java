@@ -32,6 +32,12 @@ public final class Shade {
 	static boolean HALF = Boolean.parseBoolean(System.getProperty("mcopt.shade.half", "true"));
 	/** Wide soft shadow edges (16-tap filter, a little grainy) instead of solid shadows with a slightly soft edge (4 lookups). */
 	static boolean SOFT = Boolean.getBoolean("mcopt.shade.soft");
+	/** mcopt's stylized clouds instead of vanilla's (ShadeClouds). */
+	static boolean CLOUDS = Boolean.parseBoolean(System.getProperty("mcopt.shade.clouds", "true"));
+	/** How far the stylized clouds reach, blocks. */
+	static float CLOUD_DIST = f("mcopt.shade.cloudDist", 640f);
+	/** Coloured block light strength 0..1 (ShadeLights). */
+	static float BLOCK_LIGHT = f("mcopt.shade.blockLight", 0.6f);
 	/** Sun / moon light colour by time of day, 0..1. */
 	static float LIGHT = f("mcopt.shade.light", 0.8f);
 	/** 1 normals, 2 shadow, 3 ao; 0 the lit picture. */
@@ -140,6 +146,9 @@ public final class Shade {
 		LIGHT = 0.8f;
 		HALF = true;
 		SOFT = false;
+		CLOUDS = true;
+		CLOUD_DIST = 640f;
+		BLOCK_LIGHT = 0.6f;
 		debugNow = 0;
 		enabled = true;
 	}
