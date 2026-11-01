@@ -118,7 +118,9 @@ shadow side.
 2. Sample it in `shade.fsh` (PCF, normal-offset bias), keep contact shadows for detail; sun/moon colour by time of day.
 3. G-buffer redirect (PassRedirector/PassDelegate), water, bloom.
 
-Update: step 1 is written but unverified, behind `-Dmcopt.shade.map=true` (default off; needs `-Dmcopt.own=true`). `ShadeShadow` (level render head)
-calls OwnTerrain.shadowCull + new shadowDraw (kind 7|posonly solid, kind 6 cutout, depth-only pass); shade.fsh samples it (PCF, normal-offset bias).
-Next: look at the PNGs from `-Dmcopt.shade.shotTime=1000` (debug d2) to check the map draws and the sampling orientation, check `rain` arg
-(log showed 1.0, which would zero `day`), then light colour by time of day, then G-buffer/water/bloom.
+Update: sun shadow map works behind `-Dmcopt.shade.map=true` (needs `-Dmcopt.own=true`; `mapRes`, `mapRadius`). `ShadeShadow` (level render head) calls
+OwnTerrain.shadowCull + shadowDraw (depth-only pass, position-only solid + alpha-tested cutout); shade.fsh samples it with PCF and normal-offset
+bias, contact shadows kept as fine detail. Verified in screenshots (morning, `-Dmcopt.shade.shotTime=1000`): shadow mask shows tree and leaf
+shadows, picture sane; leaves show some acne noise in d2. The "rain 1.0" was only the first frame's default (steady state 0.0).
+Light colour by time of day: `mcopt.shade.light` (default 0.6): warm low sun, white noon, cool moon, applied only where lit.
+Next: tune leaf acne/PCF softness, check dusk/night shots (shotTime=12500/18000), water (needs depth for translucent), bloom, G-buffer.

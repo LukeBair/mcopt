@@ -16,6 +16,7 @@ layout(std140) uniform ShadeInfo {
     vec4 Params1;  // x debug mode, y ao radius (blocks), z texel width, w texel height
     mat4 ShadowM;  // view space -> sun shadow map clip (reverse-Z depth)
     vec4 ShadowP;  // x map texel (blocks), y 1/resolution, z map valid, w depth range (blocks)
+    vec4 Tint;     // rgb: light colour (sun or moon by time of day), a: strength
 };
 
 layout(location = 0) in vec2 texCoord;
@@ -87,6 +88,7 @@ void main() {
 
     float shadow = 0.0;
     float ao = 0.0;
+    float lit = 0.0;
     vec3 n = vec3(0.0, 1.0, 0.0);
 
     if (d0 > 0.0) {
@@ -103,6 +105,7 @@ void main() {
         if (dot(n, p) > 0.0) n = -n;
 
         float dist = length(p);
+        lit = smoothstep(-0.1, 0.35, dot(n, normalize(Sun.xyz)));
         float jitter = hash12(gl_FragCoord.xy);
 
         // Shadow: the sun map where it covers, with the screen-space march kept as fine contact detail (and as the fallback outside it).
@@ -173,6 +176,8 @@ void main() {
     vec3 shadowTint = vec3(0.70, 0.80, 1.0);
     col *= mix(vec3(1.0), shadowTint * (1.0 - 0.18 * Params0.x), shadow * Params0.x);
     col *= 1.0 - ao * Params0.y * 0.6;
+    // Light colour: warm low sun, white noon, cool moon, only where the light reaches (facing it and not in shadow).
+    col *= mix(vec3(1.0), Tint.rgb / dot(Tint.rgb, vec3(0.3333)), Tint.a * lit * (1.0 - shadow));
 
     col = tonemap(col, Params0.z);
     fragColor = vec4(col, src.a);

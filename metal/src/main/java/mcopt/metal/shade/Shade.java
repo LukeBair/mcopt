@@ -21,6 +21,8 @@ public final class Shade {
 	static final int MAP_RES = Integer.getInteger("mcopt.shade.mapRes", 2048);
 	/** Half the cascade's width in blocks. */
 	static final float MAP_RADIUS = f("mcopt.shade.mapRadius", 128f);
+	/** Sun / moon light colour by time of day, 0..1. */
+	static final float LIGHT = f("mcopt.shade.light", 0.6f);
 	/** 1 normals, 2 shadow, 3 ao; 0 the lit picture. */
 	static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
 
