@@ -30,7 +30,7 @@ abstract class ShadeGameRendererMixin {
 	private void mcopt$shade(CallbackInfo ci) {
 		if (!Shade.ON && Shade.SHOT <= 0) return;
 		var level = this.gameRenderState.levelRenderState;
-		if (Shade.ON && !Shade.suppress) ShadePass.run(this.mainRenderTarget, this.resourcePool, level.cameraRenderState, level.skyRenderState, 1f - level.skyRenderState.rainBrightness);
+		if (Shade.ON && Shade.enabled && !Shade.suppress) ShadePass.run(this.mainRenderTarget, this.resourcePool, level.cameraRenderState, level.skyRenderState, 1f - level.skyRenderState.rainBrightness);
 		Shade.maybeShot(this.mainRenderTarget);
 		ShadeDepth.endFrame();
 	}

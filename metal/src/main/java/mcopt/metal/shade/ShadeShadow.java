@@ -59,7 +59,7 @@ public final class ShadeShadow {
 	/** Level render head. */
 	public static void render() {
 		valid = false;
-		if (failed || !Shade.ON || !Shade.MAP || Shade.suppress || Float.isNaN(sunAngle) || atlas == null) return;
+		if (failed || !Shade.ON || !Shade.MAP || !Shade.enabled || Shade.suppress || Float.isNaN(sunAngle) || atlas == null) return;
 		OwnTerrain own = OwnTerrain.get();
 		Minecraft mc = Minecraft.getInstance();
 		if (mc.level == null) atlas = null;

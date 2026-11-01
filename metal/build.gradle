@@ -4,12 +4,18 @@ plugins {
 
 version = '0.3.0-alpha.2'
 
+repositories {
+	maven { url = 'https://maven.terraformersmc.com/releases/' }
+}
+
 dependencies {
 	minecraft "com.mojang:minecraft:${minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${loader_version}"
 	// Our mesher's FRAPI path (mcopt.metal.own.OwnFrapi, loaded only when Fabric API's renderer API is): compile only, never bundled.
 	compileOnly "net.fabricmc.fabric-api:fabric-renderer-api-v1:17.0.15+79385d0b5d"
 	compileOnly "net.fabricmc.fabric-api:fabric-api-base:2.0.6+fcdff87f5d"
+	// The shader settings' Mod Menu entry (mcopt.metal.shade.ShadeModMenu, loaded only when Mod Menu is): compile only.
+	compileOnly("com.terraformersmc:modmenu:21.0.0") { transitive = false }
 }
 
 def nativeOut = layout.buildDirectory.dir('natives/natives')

@@ -7,27 +7,27 @@ package mcopt.metal.shade;
 public final class Shade {
 	public static final boolean ON = Boolean.getBoolean("mcopt.shade");
 	/** Sun shadow darkening 0..1. */
-	static final float SHADOW = f("mcopt.shade.shadow", 0.85f);
+	static float SHADOW = f("mcopt.shade.shadow", 0.85f);
 	/** Ambient occlusion strength 0..1. */
-	static final float AO = f("mcopt.shade.ao", 0.8f);
+	static float AO = f("mcopt.shade.ao", 0.8f);
 	/** Tonemap / grade amount 0..1. */
-	static final float GRADE = f("mcopt.shade.grade", 0.7f);
+	static float GRADE = f("mcopt.shade.grade", 0.7f);
 	/** Contact shadow reach in blocks. */
-	static final float SHADOW_LEN = f("mcopt.shade.shadowLen", 24f);
+	static float SHADOW_LEN = f("mcopt.shade.shadowLen", 24f);
 	/** Ambient occlusion radius in blocks. */
-	static final float AO_RADIUS = f("mcopt.shade.aoRadius", 1.2f);
+	static float AO_RADIUS = f("mcopt.shade.aoRadius", 1.2f);
 	/** The sun shadow map (needs mcopt.own; one cascade around the camera). */
-	static final boolean MAP = Boolean.parseBoolean(System.getProperty("mcopt.shade.map", "true"));
+	static boolean MAP = Boolean.parseBoolean(System.getProperty("mcopt.shade.map", "true"));
 	static final int MAP_RES = Integer.getInteger("mcopt.shade.mapRes", 2048);
 	/** Half the cascade's width in blocks. */
-	static final float MAP_RADIUS = f("mcopt.shade.mapRadius", 128f);
+	static float MAP_RADIUS = f("mcopt.shade.mapRadius", 128f);
 	/** The level has a sun (the overworld): no sky light in the Nether or the End, so no sun shadows or light colour there. */
 	static boolean sunny(net.minecraft.client.multiplayer.ClientLevel level) {
 		return level.dimensionType().hasSkyLight();
 	}
 
 	/** Sun / moon light colour by time of day, 0..1. */
-	static final float LIGHT = f("mcopt.shade.light", 0.8f);
+	static float LIGHT = f("mcopt.shade.light", 0.8f);
 	/** 1 normals, 2 shadow, 3 ao; 0 the lit picture. */
 	static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
 
@@ -38,6 +38,8 @@ public final class Shade {
 	static final long SHOT_DELAY = Long.getLong("mcopt.shade.shotDelay", 20L);
 	/** The shade pass is skipped (the "off" step). */
 	public static boolean suppress;
+	/** The settings screen's on/off: with mcopt.shade on at launch, the pass can be switched off and on live. */
+	public static boolean enabled = true;
 	/** Freeze the camera at this yaw/pitch while a shot sequence runs (yaw 999 = leave alone). */
 	static final float YAW = f("mcopt.shade.shotYaw", 56f), PITCH = f("mcopt.shade.shotPitch", 5f);
 	/** Self-test: set the time of day (ticks) when the shot sequence starts and stop the clock (-1: leave). */
@@ -117,6 +119,28 @@ public final class Shade {
 				}));
 		}
 		return out;
+	}
+
+	/** The settings screen's reset: the built-in defaults above (ignoring -D overrides). */
+	static void reset() {
+		SHADOW = 0.85f;
+		AO = 0.8f;
+		GRADE = 0.7f;
+		SHADOW_LEN = 24f;
+		AO_RADIUS = 1.2f;
+		MAP = true;
+		MAP_RADIUS = 128f;
+		LIGHT = 0.8f;
+		debugNow = 0;
+		enabled = true;
+	}
+
+	static String pct(double v) {
+		return Math.round(v * 100) + "%";
+	}
+
+	static String blocks(double v) {
+		return v < 10 ? String.format(java.util.Locale.ROOT, "%.2f", v) : Long.toString(Math.round(v));
 	}
 
 	private Shade() {

@@ -7,6 +7,10 @@ Run: `./gradlew :metal:runClient -PmcoptArgs="-Dmcopt.shade=true"` (then pick a 
 shadows, ambient occlusion, warm sun / cool shade / moon colour by time of day, and a filmic grade. Without it nothing extra runs and the picture
 is vanilla's. Add `-Dmcopt.shade=false` on the command line to override a config line.
 
+In game: Video Settings > **mcopt Shaders...** (or Mod Menu's configure button) has every setting below as a slider that applies live,
+an on/off switch, a debug view picker and Reset to defaults. Closing the screen writes the values to `config/mcopt.properties`.
+Shadow map resolution (`mcopt.shade.mapRes`) is launch-only.
+
 Tuning (all optional): `mcopt.shade.shadow` 0..1 (0.85, shadow darkness), `.ao` 0..1 (0.8), `.grade` 0..1 (0.7, tonemap/saturation),
 `.light` 0..1 (0.8, sun/moon colour), `.shadowLen` blocks (24, contact-shadow reach), `.aoRadius` blocks (1.2), `.map` true/false (shadow map),
 `.mapRes` (2048), `.mapRadius` blocks (128, half-width of the one cascade), `.debug` 1 normals / 2 shadow / 3 AO.
