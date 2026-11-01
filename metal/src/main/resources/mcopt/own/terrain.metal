@@ -89,6 +89,7 @@ struct DrawFrame {
 	int fadeMs;
 	int clipOnCpu;        // 1: clip below is ProjMat * ModelViewMat, multiplied once on the CPU (-Dmcopt.own.cpuClip)
 	float4x4 clip;
+	float4 wave;          // mcopt shaders (ShadeWater): x wave amplitude (blocks, 0: off), y foam strength
 };
 
 // vanilla's std140 uniform blocks
@@ -1605,8 +1606,13 @@ static float linearFogV(float vertexDistance, float fogStart, float fogEnd) {
 constant bool F_ORACLE_SET [[function_constant(17)]];
 constant bool F_ORACLE = is_function_constant_defined(F_ORACLE_SET) && F_ORACLE_SET;
 
+constant bool TRANSLUCENT [[function_constant(4)]];
+// mcopt shaders: tagged sea water's varyings (ShadeWater), translucent only
+constant bool F_WATER = TRANSLUCENT && F_VARY;
+
 struct VOut {
 	float4 pos [[position]];
+	float4 water [[function_constant(F_WATER)]];  // world xz (mod 1024), foam level, wave height -1..1 (0: untagged water)
 	float sphericalVertexDistance [[function_constant(F_VARY)]];
 	float cylindricalVertexDistance [[function_constant(F_RICH)]];
 	float4 vertexColor [[function_constant(F_FLOATCOLOR)]];
@@ -1658,7 +1664,6 @@ struct CVtx {
 };
 
 constant bool COMPACT [[function_constant(1)]];
-constant bool TRANSLUCENT [[function_constant(4)]];
 constant bool QUADS [[function_constant(8)]];  // the per-quad path: vertex_id is the arena vertex, the slot from quadOwner
 // probe only: 0 vanilla's vertex stage, 1 without the lightmap fetch, 2 position only (no other varying computed)
 constant int VS_MODE [[function_constant(7)]];
@@ -1668,7 +1673,7 @@ constant bool CPU_CLIP [[function_constant(3)]];
 static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df, device const void *arenaRaw, constant Projection &proj,
 	constant Globals &g, constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel);
 static VOut ownShade(Vtx v, int3 origin, int uploadMs, constant DrawFrame &df, constant Projection &proj, constant Globals &g,
-	constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel);
+	constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel, float yOff = 0.0, float4 wat = float4(0));
 
 // -Dmcopt.own.mesh.qrec (OWN_QREC, prepended by OwnTerrain; OwnQrec): every solid / cutout quad id is a 40-byte record id, and
 // its corner c is decoded into exactly the compact vertex it replaces. Words: 0 corner selections (bits 3c + axis: x / y / z takes
@@ -1891,6 +1896,28 @@ vertex VOut own_vs(uint vid [[vertex_id]], uint iid [[instance_id]], constant Dr
 }
 
 // one arena vertex as vanilla's terrain.vsh shades it (own_vs, own_mesh); rel: its section-relative position
+// a translucent vertex's section-relative position only (ownVertex's decode, without the record path translucent never takes)
+static float3 ownTPos(uint vi, device const void *arenaRaw) {
+	if (COMPACT && F_TIGHT) {
+		uint4 w = ((device const uint4 *) arenaRaw)[vi];
+		return OWN_POS3(arenaRaw, ushort(w.x), ushort(w.x >> 16), ushort(w.y));
+	}
+	if (COMPACT) {
+		CVtx c = ((device const CVtx *) arenaRaw)[vi];
+		return OWN_POS3(arenaRaw, c.px, c.py, c.pz);
+	}
+	return float3(((device const Vtx *) arenaRaw)[vi].pos);
+}
+
+// mcopt shaders: the sea's wave field at a block, -1..1: three long swells crossing at angles, drifting with time (seconds)
+static float seaWave(int2 b, float T) {
+	float2 p = float2(b & 4095);
+	float h = 0.5 * sin(p.x * 0.31 + p.y * 0.12 + T * 1.1)
+		+ 0.32 * sin(p.y * 0.27 - p.x * 0.07 - T * 0.85)
+		+ 0.18 * sin((p.x + p.y) * 0.55 + T * 1.9);
+	return h;
+}
+
 static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df, device const void *arenaRaw, constant Projection &proj,
 	constant Globals &g, constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel) {
 	Vtx v;
@@ -1912,16 +1939,32 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 	} else {
 		v = ((device const Vtx *) arenaRaw)[vi];
 	}
+	if (TRANSLUCENT && df.wave.x > 0.0) {
+		uint tag = 255u - uint(v.color.a);
+		if (tag >= 1u && tag <= 5u) {
+			// Tagged sea water (ShadeWater): its block from the quad's centre (this corner and the opposite one), the block's surface
+			// raised or lowered by the wave field in 1/32-block steps, so each block stays flat and the sea stays blocky.
+			v.color.a = 255;
+			float3 c = (float3(v.pos) + ownTPos(vi ^ 2u, arenaRaw)) * 0.5;
+			int3 blk = origin + int3(floor(c));
+			float h = seaWave(blk.xz, g.GameTime * 1200.0);
+			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(h * df.wave.x * 32.0) / 32.0 : 0.0;
+			float4 wat = float4(float2(origin.xz & 1023) + float2(v.pos.xz), float(tag - 1u) * 0.25 * df.wave.y, h);
+			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff, wat);
+		}
+	}
 	return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel);
 }
 
 // a vertex as vanilla's terrain.vsh shades it (ownVertex's fetched one, or own_vs' from a quad record)
 static VOut ownShade(Vtx v, int3 origin, int uploadMs, constant DrawFrame &df, constant Projection &proj, constant Globals &g,
-	constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel) {
+	constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel, float yOff, float4 wat) {
 	VOut o;
 	rel = float3(v.pos);
 	int3 cbp = int3(g.CameraBlockPos);
 	float3 pos = float3(v.pos) + float3(origin - cbp) + float3(g.CameraOffset);
+	pos.y += yOff;
+	if (F_WATER) o.water = wat;
 	if (CPU_CLIP) o.pos = df.clip * float4(pos, 1.0);
 	else o.pos = (proj.ProjMat * t.ModelViewMat) * float4(pos, 1.0);
 	o.pos.y = -o.pos.y;  // the backend's row order (SPIRV-Cross flip_vert_y)
@@ -2312,6 +2355,36 @@ static float linear_fog_value(float vertexDistance, float fogStart, float fogEnd
 constant bool CUTOUT [[function_constant(0)]];
 constant float CUTOUT_LIMIT [[function_constant(5)]];  // vanilla's ALPHA_CUTOUT: 0.5 cutout, 0.1 translucent
 
+// mcopt shaders: a value-noise hash for the foam
+static float seaHash(float2 p) {
+	float3 p3 = fract(float3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+// mcopt shaders: tagged sea water's look. Crests a touch lighter and troughs darker (flat per block, as the waves are), and on shore
+// blocks blocky foam: texel-sized cells (16 a block) of drifting value noise, thicker the more land the block touches and in rough
+// weather, lit as the water is.
+static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
+	if (in.water.z <= 0.0 && in.water.w == 0.0) return color;
+	color.rgb *= 1.0 + 0.1 * in.water.w;
+	if (in.water.z > 0.0) {
+		float T = g.GameTime * 1200.0;
+		float2 cell = floor(in.water.xy * 16.0);
+		float2 q = cell / 6.0 + float2(T * 0.35, T * 0.2);
+		float2 i = floor(q), f = fract(q);
+		f = f * f * (3.0 - 2.0 * f);
+		float n = mix(mix(seaHash(i), seaHash(i + float2(1, 0)), f.x), mix(seaHash(i + float2(0, 1)), seaHash(i + float2(1, 1)), f.x), f.y);
+		n = n * 0.75 + 0.25 * seaHash(cell + floor(T * 1.5));
+		if (n > 1.0 - 0.32 * min(in.water.z, 1.6)) {
+			float3 tint = getColor(in).rgb;
+			float lit = max(tint.r, max(tint.g, tint.b));
+			color = float4(float3(0.9, 0.95, 1.0) * lit, max(color.a, 0.9));
+		}
+	}
+	return color;
+}
+
 fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(22)]], constant Terrain &t [[buffer(23)]], constant Fog &fog [[buffer(24)]],
 	texture2d<float> atlas [[texture(16)]], sampler atlasSampler [[sampler(14)]]) {
 #ifdef OWN_TPROBE
@@ -2326,6 +2399,7 @@ fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(22)]],
 	float2 pixelSize = 1.0f / float2(t.TextureSize);
 	float4 color = (g.UseRgss == 1 ? sampleRGSS(atlas, atlasSampler, in.texCoord0, pixelSize) : sampleNearest(atlas, atlasSampler, in.texCoord0, pixelSize))
 		* getColor(in);
+	if (F_WATER) color = seaSurface(color, in, g);
 	// F_LEAN: the chunk visibility is 1 (mix(x, y, 1) is y), the render-distance fog value 0 (max(e, 0) is e for e >= 0)
 	if (F_RICH) color = mix(fog.FogColor * float4(1, 1, 1, color.a), color, in.chunkVisibility);
 	if (CUTOUT && color.a < CUTOUT_LIMIT) discard_fragment();

@@ -164,6 +164,7 @@ public final class OwnMesher {
 			: startedLayers != null ? translucent(startedLayers, builders, translucent) : Discard.INSTANCE;
 		// With Fabric API's renderer API loaded, blocks go through its renderer as Fabric API's own compile patch does
 		OwnApi.Mesher api = OwnApi.mesher(ambientOcclusion, blockColors, quads, () -> startedLayers != null ? translucent(startedLayers, builders, translucent) : Discard.INSTANCE);
+		boolean waves = mcopt.metal.shade.ShadeWater.tagging();
 		// BlockPos.betweenClosed's order (x fastest, then y, then z) with its one mutable cursor, without the iterator
 		BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
 		int minX = minPos.getX(), minY = minPos.getY(), minZ = minPos.getZ();
@@ -183,7 +184,12 @@ public final class OwnMesher {
 						if (blockEntity != null) results.blockEntities.add(blockEntity);
 					}
 					FluidState fluidState = blockState.getFluidState();
-					if (!fluidState.isEmpty()) fluidRenderer.tesselate(level, pos, fluidOutput, blockState, fluidState);
+					if (!fluidState.isEmpty()) {
+						// mcopt shaders: open-sea water is tagged for blocky waves and shore foam (ShadeWater)
+						int waterTag = waves ? mcopt.metal.shade.ShadeWater.tag(level, pos, fluidState) : 0;
+						fluidRenderer.tesselate(level, pos, waterTag == 0 ? fluidOutput : l -> mcopt.metal.shade.ShadeWater.tagged(fluidOutput.getBuilder(l), waterTag),
+							blockState, fluidState);
+					}
 					if (blockState.getRenderShape() == RenderShape.MODEL && api != null) {
 						// vanilla's region, not OwnRegion: Fabric API extends RenderSectionRegion (block entity render data, biomes) for FRAPI models
 						api.block(SectionPos.sectionRelative(pos.getX()), SectionPos.sectionRelative(pos.getY()), SectionPos.sectionRelative(pos.getZ()), region, pos,

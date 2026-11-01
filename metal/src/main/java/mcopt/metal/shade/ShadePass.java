@@ -37,7 +37,7 @@ import org.lwjgl.system.MemoryStack;
  */
 public final class ShadePass {
 	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4()
-		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().get();
+		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().get();
 	private static final int LIGHTS_SIZE = ShadeLights.MAX * 2 * 16;
 	private static RenderPipeline occ;
 	private static RenderPipeline shade;
@@ -115,10 +115,28 @@ public final class ShadePass {
 	private static final boolean FORCE_VIVID = Boolean.getBoolean("mcopt.shade.forceVivid");
 
 	/**
-	 * 1 if the sunrise or sunset nearest now is one of the rare vivid ones, else 0. Each is its own roll: the day count (game time,
-	 * less however far into the day the sun is) and which half of the day, hashed, so it's stable for the whole event.
+	 * Vivid palettes, each as seen in real skies: the sunlight on the clouds' lit sides, their shaded undersides, and a tint for the sky
+	 * toward the horizon. A vivid event uses one of them throughout.
 	 */
-	private static float vivid(long gameTime, float sunAngle) {
+	private static final float[][] VIVID = {
+		// Fiery: deep orange light, red-orange undersides.
+		{1f, 0.42f, 0.18f, 0.92f, 0.36f, 0.28f, 1.12f, 0.86f, 0.74f},
+		// Pink and magenta: salmon light, mauve undersides.
+		{1f, 0.52f, 0.5f, 0.86f, 0.42f, 0.7f, 1.08f, 0.86f, 1f},
+		// Golden hour: gold light, peach undersides.
+		{1f, 0.74f, 0.3f, 1f, 0.66f, 0.46f, 1.1f, 1f, 0.78f},
+		// Violet twilight: rose light, lavender undersides.
+		{0.96f, 0.5f, 0.62f, 0.58f, 0.44f, 0.86f, 1f, 0.84f, 1.12f},
+		// Smoky red: a low red sun through haze, crimson undersides.
+		{1f, 0.3f, 0.16f, 0.72f, 0.24f, 0.3f, 1.14f, 0.8f, 0.78f},
+	};
+
+	/**
+	 * The vivid palette (an index into VIVID) for the sunrise or sunset nearest now, or -1 for an ordinary one. Each is its own roll:
+	 * the day count (game time, less however far into the day the sun is) and which half of the day, hashed, so it's stable for
+	 * the whole event.
+	 */
+	private static int vivid(long gameTime, float sunAngle) {
 		double frac = (sunAngle / (2 * Math.PI)) % 1.0;
 		if (frac < 0) frac += 1.0;
 		long day = Math.round((gameTime - frac * 24000.0) / 24000.0);
@@ -126,7 +144,8 @@ public final class ShadePass {
 		long h = event * 0x9E3779B97F4A7C15L;
 		h = (h ^ (h >>> 31)) * 0xBF58476D1CE4E5B9L;
 		h ^= h >>> 29;
-		return FORCE_VIVID || (h >>> 11) * 0x1.0p-53 < VIVID_CHANCE ? 1f : 0f;
+		if (!FORCE_VIVID && (h >>> 11) * 0x1.0p-53 >= VIVID_CHANCE) return -1;
+		return (int) Math.floorMod(h ^ (h >>> 32), (long) VIVID.length);
 	}
 
 	private static void apply(RenderTarget main, GraphicsResourceAllocator pool, LevelRenderState level, CameraRenderState camera, SkyRenderState sky, float rain) {
@@ -141,8 +160,11 @@ public final class ShadePass {
 		float day = sunny ? smooth(-0.04f, 0.28f, sun.y) * (1f - rain) : 0f;
 		float elev = sun.y;
 		float sunW = smooth(-0.08f, 0.15f, elev), warm = lerp(0.3f, 1f, 1f - smooth(0.05f, 0.55f, elev));
-		float vivid = vivid(level.gameTime, sky.sunAngle) * (1f - rain);
-		float tr = lerp(0.84f, lerp(1f, 1.0f, warm), sunW), tg = lerp(0.89f, lerp(1f, lerp(0.74f, 0.58f, vivid), warm), sunW), tb = lerp(1f, lerp(1f, lerp(0.50f, 0.42f, vivid), warm), sunW);
+		int pal = vivid(level.gameTime, sky.sunAngle);
+		float vivid = pal >= 0 ? 1f - rain : 0f;
+		float[] vp = pal >= 0 ? VIVID[pal] : VIVID[0];
+		// A vivid event's light colours the terrain too: toward the palette's light, normalized to the ordinary warm light's level.
+		float tr = lerp(0.84f, lerp(1f, 1.0f, warm), sunW), tg = lerp(0.89f, lerp(1f, lerp(0.74f, vp[1] / vp[0], vivid), warm), sunW), tb = lerp(1f, lerp(1f, lerp(0.50f, vp[2] / vp[0], vivid), warm), sunW);
 		float rain0 = rain;
 		float tint = !sunny ? 0f : Shade.LIGHT * lerp(0.4f, 1f, sunW) * (1f - rain);
 		if (elev < -0.05f) sun.negate();  // the moon's direction at night
@@ -184,6 +206,9 @@ public final class ShadePass {
 				.putVec4(ShadeLights.count, Shade.BLOCK_LIGHT, camera.fogType == FogType.WATER ? 1f : 0f, Math.max(day, 0.15f))
 				.putMat4f(shadowM2)
 				.putVec4(rain0, vivid, 0f, 0f)
+				.putVec4(vp[0], vp[1], vp[2], 0f)
+				.putVec4(vp[3], vp[4], vp[5], 0f)
+				.putVec4(vp[6], vp[7], vp[8], 0f)
 				.get();
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), data);
 		}

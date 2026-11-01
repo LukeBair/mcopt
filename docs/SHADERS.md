@@ -33,11 +33,22 @@ optical depth (path through the columns times density): grazing edges are see-th
 day (warm and rosy at dawn and dusk, rim highlights, silver lining toward the sun). Rain thickens and lowers them, spreads coverage,
 greys them and drops the sun highlights. They cast soft shadows on sunlit terrain (gone in rain, when the sky's all overcast).
 `mcopt.shade.cloudDist` (default 640, "Cloud distance") is how far they reach. About 3.5% of sunrises and sunsets are vivid (a hashed
-roll per event, steady for its length): deeper orange into pink in the light, the clouds and the sky near the horizon.
+roll per event, steady for its length), each with one palette picked by the same roll (ShadePass.VIVID: fiery, pink and magenta,
+golden hour, violet twilight, smoky red): its light on the terrain and the clouds' lit sides, its colour in their shaded undersides,
+and its tint in the sky toward the horizon.
 `-Dmcopt.shade.forceVivid=true` makes them all vivid, for testing.
 `mcopt.shade.blockLight` (default 0.6, "Light colours"): ShadeLights finds the 32 light-emitting blocks nearest the camera every 20
 frames, each with a hue (torch warm, soul fire and sea lanterns cool, redstone red, amethyst violet, else the block's map colour), and
 the composite shifts the colour of what they light toward it, where the sun isn't the main light. No occlusion: it's a tint.
+`mcopt.shade.waves` (default true, "Ocean waves"): open-sea water (source water at sea level, open to the sky, in an ocean or beach
+biome) is tagged when meshed (ShadeWater, in the vertex alpha: 255 - k), and terrain.metal raises or lowers each tagged block's surface
+in 1/32-block steps (half a texture pixel) by a field of crossing swells, so the sea stays blocky; crests are a touch lighter. The
+amplitude is 2 steps calm, 4 in rain, 7 in a thunderstorm (DrawFrame.wave). Shore blocks (touching non-water) get blocky foam: drifting
+texel-sized noise, thicker the more land they touch and in rough weather. Neighbouring blocks at different heights leave a hairline
+gap at grazing angles. Toggling it applies to chunks as they are meshed again.
+`mcopt.renderScale` (default 1, "Render scale", 50..100%): the level renders into targets that fraction of the window's size
+(ShadeRenderScaleMixin swaps GameRenderer's main and hand targets around renderLevel..applyPostEffects, so the shade pass runs scaled
+too) and is stretched bilinearly onto the window's target before the GUI, which stays sharp.
 Under water (camera in water) the composite mutes and tints colours blue-green and adds distance fog, darker at night.
 
 Measured at 3024x1898 (dev client, frozen camera, Metal System Trace): the shade pass is the frame's biggest cost, about 3.5 ms

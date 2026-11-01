@@ -29,6 +29,9 @@ layout(std140) uniform ShadeInfo {
     vec4 LightP;   // x coloured lights in ShadeLights, y their strength, z camera under water (1), w daylight under water 0..1
     mat4 ShadowM2; // view space -> the second shadow map (the sun angle step above ShadowM's); Opts.y blends toward it
     vec4 CloudX;   // x rain 0..1, y vivid sunrise/sunset (1, rare)
+    vec4 VividL;   // vivid palette: sunlight on the clouds
+    vec4 VividS;   // vivid palette: shaded undersides
+    vec4 VividK;   // vivid palette: sky tint toward the horizon
 };
 
 // The light-emitting blocks nearest the camera (ShadeLights): view-space centre and emission 0..1, and hue.
@@ -144,9 +147,10 @@ vec3 cloudShade(vec3 h, vec3 d, vec3 sunW, bool side, int axis, vec2 stepv, floa
     float day = CloudP.w;
     // Near the horizon the sun's light turns orange and the shaded sides pick up a rosy cast, as at dawn and dusk.
     float low = (1.0 - smoothstep(0.0, 0.35, sunW.y)) * smoothstep(-0.12, 0.02, sunW.y);
-    // A vivid one (CloudX.y, rare) burns deeper orange into pink and magenta, and lights the clouds harder.
+    // A vivid one (CloudX.y, rare) takes its palette's colours (ShadePass.VIVID): the light on top, the undersides' colour below,
+    // and lights the clouds harder.
     float viv = CloudX.y;
-    vec3 dusk = mix(vec3(1.0, 0.55, 0.28), mix(vec3(1.0, 0.42, 0.22), vec3(1.0, 0.3, 0.55), 1.0 - hf), viv);
+    vec3 dusk = mix(vec3(1.0, 0.55, 0.28), mix(VividL.rgb, VividS.rgb, (1.0 - hf) * 0.6), viv);
     vec3 sunC = mix(mix(vec3(0.55, 0.62, 0.85), Tint.rgb, day), dusk * (1.0 + 0.35 * viv), low * 0.85);
     float diff = max(dot(n, sunW), 0.0);
     // Highlights: the sunlit faces and the rims of the tops glow in the light's colour.
@@ -158,7 +162,7 @@ vec3 cloudShade(vec3 h, vec3 d, vec3 sunW, bool side, int axis, vec2 stepv, floa
     float wet = CloudX.x;
     light *= 1.0 - 0.8 * wet;
     behind *= 1.0 - wet;
-    vec3 col = CloudCol.rgb * (amb * mix(vec3(1.0), mix(vec3(1.0, 0.8, 0.78), vec3(0.95, 0.62, 0.78), viv), low * 0.6) * mix(1.0, mix(0.45, 0.75, hf), wet) + light + sunC * behind);
+    vec3 col = CloudCol.rgb * (amb * mix(vec3(1.0), mix(vec3(1.0, 0.8, 0.78), VividS.rgb, viv), low * 0.6) * mix(1.0, mix(0.45, 0.75, hf), wet) + light + sunC * behind);
     // A little haze toward the sky with distance, so far clouds sit in the air rather than on it.
     return mix(col, sky, smoothstep(0.0, CloudP.z, tin) * 0.35);
 }
@@ -324,7 +328,7 @@ void main() {
         float lowSun = (1.0 - smoothstep(0.0, 0.3, sW.y)) * smoothstep(-0.15, 0.0, sW.y);
         float k = CloudX.y * lowSun * (1.0 - smoothstep(0.0, 0.6, dW.y)) * mix(0.5, 1.0, max(dot(dW, sW), 0.0));
         float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-        col = mix(col, max(vec3(lum) + (col - vec3(lum)) * 1.9, 0.0) * vec3(1.08, 0.9, 0.95), k);
+        col = mix(col, max(vec3(lum) + (col - vec3(lum)) * 1.9, 0.0) * VividK.rgb, k);
     }
 
     // Under water: murky (washed toward a dim blue-green, colours muted) and fogged with distance. Not over the hand.

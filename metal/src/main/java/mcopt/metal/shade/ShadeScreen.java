@@ -62,6 +62,11 @@ public final class ShadeScreen extends OptionsSubScreen {
 			OptionInstance.createBoolean("Stylized clouds",
 				v -> Tooltip.create(Component.literal("Taller, blocky clouds shaded by their density, lit by the time of day. Off: vanilla's clouds.")),
 				Shade.CLOUDS, v -> Shade.CLOUDS = v),
+			slider("Render scale", "The world's resolution as a share of the window's (the HUD stays sharp). Lower is faster and cooler, softer.",
+				0.5, 1, RenderScale.SCALE, Shade::pct, v -> RenderScale.SCALE = RenderScale.clamp((float) v)),
+			OptionInstance.createBoolean("Ocean waves",
+				v -> Tooltip.create(Component.literal("Blocky waves on the open sea, bigger in rain and storms, with foam along the shore.")),
+				Shade.WAVES, v -> Shade.WAVES = v),
 			slider("Cloud distance", "How far the stylized clouds reach, in blocks.", 128, 1536, Shade.CLOUD_DIST, Shade::blocks, v -> Shade.CLOUD_DIST = (float) v),
 			OptionInstance.createBoolean("Wide soft shadows",
 				v -> Tooltip.create(Component.literal("Wide, filtered shadow edges (a little grainy). Off: solid shadows with a slightly soft edge, and faster.")),
@@ -102,6 +107,8 @@ public final class ShadeScreen extends OptionsSubScreen {
 		values.put("mcopt.shade.half", Boolean.toString(Shade.HALF));
 		values.put("mcopt.shade.soft", Boolean.toString(Shade.SOFT));
 		values.put("mcopt.shade.clouds", Boolean.toString(Shade.CLOUDS));
+		values.put("mcopt.shade.waves", Boolean.toString(Shade.WAVES));
+		values.put("mcopt.renderScale", Float.toString(RenderScale.SCALE));
 		values.put("mcopt.shade.cloudDist", num(Shade.CLOUD_DIST));
 		values.put("mcopt.shade.blockLight", num(Shade.BLOCK_LIGHT));
 		save(FabricLoader.getInstance().getConfigDir().resolve("mcopt.properties"), values);

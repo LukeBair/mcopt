@@ -234,7 +234,7 @@ public final class OwnTerrain {
 	/** Bytes of one quad in the arena. */
 	static final int ARENA_QUAD = COMPACT ? 64 : QUAD_BYTES;
 	private static final int CULL_FRAME_BYTES = 144, BUCKETS = 7;
-	static final int DRAW_FRAME_BYTES = 80;
+	static final int DRAW_FRAME_BYTES = 80 + mcopt.metal.shade.ShadeWater.FRAME_BYTES;
 
 	private static @Nullable OwnTerrain instance;
 	private static boolean failed;
@@ -2209,6 +2209,7 @@ public final class OwnTerrain {
 			GpuTextureView light = Minecraft.getInstance().gameRenderer.lightmap();
 			GpuSampler lightSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
 			long d = stack.ncalloc(16, 1, DRAW_FRAME_BYTES);
+			mcopt.metal.shade.ShadeWater.put(d + 80);  // (DrawFrame.wave)
 			MemoryUtil.memPutInt(d + 4, fc != null ? nowMs : (int) (Util.getMillis() - this.baseMs));
 			MemoryUtil.memPutInt(d + 8, (int) fadeMs);
 			if (CPU_CLIP) {
@@ -2375,6 +2376,7 @@ public final class OwnTerrain {
 			MemoryUtil.memPutLong(u + 48, MetalBridge.useBuffer(this.encoder, fog.buffer()));
 			MemoryUtil.memPutLong(u + 56, fog.offset());
 			long d = stack.ncalloc(16, 1, DRAW_FRAME_BYTES);
+			mcopt.metal.shade.ShadeWater.put(d + 80);  // (DrawFrame.wave)
 			MemoryUtil.memPutInt(d + 4, (int) (Util.getMillis() - this.baseMs));
 			MemoryUtil.memPutInt(d + 12, 1);
 			clip.getToAddress(d + 16);
@@ -2934,6 +2936,7 @@ public final class OwnTerrain {
 			GpuTextureView light = Minecraft.getInstance().gameRenderer.lightmap();
 			GpuSampler lightSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
 			long d = stack.ncalloc(16, 1, DRAW_FRAME_BYTES);
+			mcopt.metal.shade.ShadeWater.put(d + 80);  // (DrawFrame.wave)
 			MemoryUtil.memPutInt(d + 4, (int) (Util.getMillis() - this.baseMs));
 			MemoryUtil.memPutInt(d + 8, (int) fadeMs);
 			if (CPU_CLIP) {

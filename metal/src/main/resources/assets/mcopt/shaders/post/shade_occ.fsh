@@ -26,6 +26,9 @@ layout(std140) uniform ShadeInfo {
     vec4 LightP;   // x coloured lights in ShadeLights, y their strength, z camera under water (1), w daylight under water 0..1
     mat4 ShadowM2; // view space -> the second shadow map (the sun angle step above ShadowM's); Opts.y blends toward it
     vec4 CloudX;   // x rain 0..1, y vivid sunrise/sunset (1, rare)
+    vec4 VividL;   // vivid palette: sunlight on the clouds
+    vec4 VividS;   // vivid palette: shaded undersides
+    vec4 VividK;   // vivid palette: sky tint toward the horizon
 };
 
 layout(location = 0) in vec2 texCoord;
