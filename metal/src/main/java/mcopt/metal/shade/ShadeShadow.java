@@ -35,8 +35,13 @@ public final class ShadeShadow {
 	private static boolean logged;
 	/** The sun's angle as the last shade pass saw it (SkyRenderState.sunAngle); NaN before the first. */
 	static volatile float sunAngle = Float.NaN;
-	/** Camera-relative world -> shadow clip, of the map drawn this frame. */
+	/** Camera-relative world -> shadow clip for this frame's camera (the map may have been drawn a few frames ago, from DRAWN_CLIP). */
 	static final Matrix4f CLIP = new Matrix4f();
+	/** The map as drawn: camera-relative to DRAWN_CAM. */
+	private static final Matrix4f DRAWN_CLIP = new Matrix4f();
+	private static double drawnX, drawnY, drawnZ, drawnSun = Double.NaN;
+	private static float drawnRadius;
+	private static int sinceDraw;
 	/** Direction to the light, world space. */
 	static final Vector3f LIGHT = new Vector3f(0, 1, 0);
 
@@ -75,6 +80,16 @@ public final class ShadeShadow {
 
 	private static void draw(OwnTerrain own, Minecraft mc) {
 		int res = Shade.MAP_RES;
+		Vec3 now = mc.gameRenderer.mainCamera().position();
+		// The map is reused while the camera stays within a block and the sun within ~0.06 degrees of where it was drawn (terrain
+		// changes show up at the next periodic redraw): only CLIP follows the camera, by the move since the draw.
+		if (tex != null && !Double.isNaN(drawnSun) && ++sinceDraw < Math.max(1, Shade.MAP_EVERY) && Math.abs(sunAngle - drawnSun) < 0.001
+			&& drawnRadius == Shade.MAP_RADIUS
+			&& Math.abs(now.x - drawnX) < 1 && Math.abs(now.y - drawnY) < 1 && Math.abs(now.z - drawnZ) < 1) {
+			CLIP.set(DRAWN_CLIP).translate((float) (now.x - drawnX), (float) (now.y - drawnY), (float) (now.z - drawnZ));
+			valid = true;
+			return;
+		}
 		if (tex == null) {
 			tex = RenderSystem.getDevice().createTexture(() -> "mcopt shadow map", 15, GpuFormat.D32_FLOAT, res, res, 1, 1);
 			view = RenderSystem.getDevice().createTextureView(tex);
@@ -111,6 +126,13 @@ public final class ShadeShadow {
 		try (RenderPass pass = enc.createRenderPass(com.mojang.renderpearl.api.commands.RenderPassDescriptor.builder(() -> "mcopt shadow map").withDepthAttachment(view, OptionalDouble.of(0.0)).build())) {
 			own.shadowDraw(CLIP, atlas, atlasSampler, proj.slice());
 		}
+		DRAWN_CLIP.set(CLIP);
+		drawnX = cam.x;
+		drawnY = cam.y;
+		drawnZ = cam.z;
+		drawnSun = sa;
+		drawnRadius = radius;
+		sinceDraw = 0;
 		valid = true;
 	}
 }

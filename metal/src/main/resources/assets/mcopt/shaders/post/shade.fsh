@@ -68,12 +68,20 @@ float mapShadow(vec3 p, vec3 n, vec3 L, float jitter, out float edge) {
     float acc = 0.0;
     const int N = 16;
     float rot = jitter * 6.2831853;
-    for (int i = 0; i < N; i++) {
+    // Four taps from the disc's outer ring first: when they agree (fully lit or fully shadowed, most of the screen) that's the
+    // answer, and only penumbra pixels pay for all sixteen.
+    for (int i = 12; i < N; i++) {
         float r = sqrt((float(i) + 0.5) / float(N));
         float a = rot + float(i) * 2.399963;
         vec2 o = vec2(cos(a), sin(a)) * r * radius;
-        float m = textureLod(ShadowSampler, uv + o, 0.0).r;
-        acc += (m > s.z + bias) ? 1.0 : 0.0;
+        acc += (textureLod(ShadowSampler, uv + o, 0.0).r > s.z + bias) ? 1.0 : 0.0;
+    }
+    if (acc == 0.0 || acc == 4.0) return acc * 0.25;
+    for (int i = 0; i < 12; i++) {
+        float r = sqrt((float(i) + 0.5) / float(N));
+        float a = rot + float(i) * 2.399963;
+        vec2 o = vec2(cos(a), sin(a)) * r * radius;
+        acc += (textureLod(ShadowSampler, uv + o, 0.0).r > s.z + bias) ? 1.0 : 0.0;
     }
     return acc / float(N);
 }
@@ -110,19 +118,22 @@ void main() {
 
         // Shadow: the sun map where it covers, with the screen-space march kept as fine contact detail (and as the fallback outside it).
         float day = Sun.w;
-        if (Params0.x > 0.0 && day > 0.0) {
-            vec3 L = normalize(Sun.xyz);
-            float facing = smoothstep(-0.1, 0.35, dot(n, L));
+        vec3 L = normalize(Sun.xyz);
+        float facing = smoothstep(-0.1, 0.35, dot(n, L));
+        // Faces turned from the sun are left to vanilla's face shading (facing 0), so they skip both lookups.
+        if (Params0.x > 0.0 && day > 0.0 && facing > 0.0) {
             float edge = 0.0;
             float mapS = 0.0;
             bool useMap = ShadowP.z > 0.5;
             if (useMap) mapS = mapShadow(p, n, L, jitter, edge);
+            // Inside the map and fully shadowed already: the contact march can't change the result.
+            bool march = !(useMap && mapS * edge >= 1.0);
             float len = useMap ? min(Params0.w, 3.0) : Params0.w;
             const int STEPS = 20;
             float stepLen = len / float(STEPS);
             vec3 o = p + n * (0.02 + dist * 0.0015);
             float hit = 0.0;
-            for (int i = 0; i < STEPS; i++) {
+            for (int i = 0; march && i < STEPS; i++) {
                 float t = (float(i) + 0.5 + jitter) * stepLen;
                 // Steps grow with distance so short and long casters are both found.
                 t = t * (0.35 + 0.65 * float(i + 1) / float(STEPS)) * 1.6;
@@ -139,7 +150,6 @@ void main() {
                 if (diff > 0.03 && diff < thick) { hit = 1.0; break; }
             }
             float s = useMap ? max(mapS * edge + hit * (1.0 - edge), hit * 0.6) : hit;
-            // Surfaces that face away from the sun are left to vanilla's face shading.
             shadow = s * facing * day * (useMap ? 1.0 : 1.0 - smoothstep(60.0, 160.0, dist));
         }
 

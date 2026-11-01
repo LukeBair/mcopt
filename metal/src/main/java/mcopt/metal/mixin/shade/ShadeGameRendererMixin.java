@@ -23,7 +23,7 @@ abstract class ShadeGameRendererMixin {
 
 	@Inject(method = "render3dHud", at = @At("HEAD"))
 	private void mcopt$shadeDepth(CallbackInfo ci) {
-		if (Shade.ON) ShadeDepth.capture(this.mainRenderTarget);
+		if (Shade.ON && Shade.enabled) ShadeDepth.capture(this.mainRenderTarget);  // switched off in the menu: no copy
 	}
 
 	@Inject(method = "applyPostEffects", at = @At("TAIL"))

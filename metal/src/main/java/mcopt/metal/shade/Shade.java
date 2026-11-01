@@ -19,6 +19,8 @@ public final class Shade {
 	/** The sun shadow map (needs mcopt.own; one cascade around the camera). */
 	static boolean MAP = Boolean.parseBoolean(System.getProperty("mcopt.shade.map", "true"));
 	static final int MAP_RES = Integer.getInteger("mcopt.shade.mapRes", 2048);
+	/** Redraw the shadow map at least every this many frames (it is also redrawn when the camera moves a block or the sun moves). */
+	static int MAP_EVERY = Integer.getInteger("mcopt.shade.mapEvery", 6);
 	/** Half the cascade's width in blocks. */
 	static float MAP_RADIUS = f("mcopt.shade.mapRadius", 128f);
 	/** The level has a sun (the overworld): no sky light in the Nether or the End, so no sun shadows or light colour there. */
@@ -130,6 +132,7 @@ public final class Shade {
 		AO_RADIUS = 1.2f;
 		MAP = true;
 		MAP_RADIUS = 128f;
+		MAP_EVERY = 6;
 		LIGHT = 0.8f;
 		debugNow = 0;
 		enabled = true;

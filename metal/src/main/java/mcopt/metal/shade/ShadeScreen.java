@@ -54,6 +54,9 @@ public final class ShadeScreen extends OptionsSubScreen {
 			OptionInstance.createBoolean("Shadow map",
 				v -> Tooltip.create(Component.literal("Real sun shadows from the terrain. Off: screen-space contact shadows only.")),
 				Shade.MAP, v -> Shade.MAP = v),
+			new OptionInstance<>("Shadow refresh", v -> Tooltip.create(Component.literal("Redraw the shadow map at least every N frames (also when you move a block or the sun moves). 1 = every frame; higher is faster, block edits show a little later.")),
+				(caption, v) -> Options.genericValueLabel(Component.literal("Shadow refresh"), Component.literal(v == 1 ? "Every frame" : "Every " + v + " frames")),
+				new OptionInstance.IntRange(1, 16), Math.clamp(Shade.MAP_EVERY, 1, 16), v -> Shade.MAP_EVERY = v),
 			slider("Shadow distance", "Blocks around you that cast sun shadows. Shorter is sharper.", 32, 256, Shade.MAP_RADIUS, Shade::blocks, v -> Shade.MAP_RADIUS = (float) v),
 			new OptionInstance<>("View", v -> Tooltip.create(Component.literal("Debug views of the shader's inputs.")),
 				(caption, v) -> Options.genericValueLabel(Component.literal("View"), Component.literal(VIEWS[v])),
@@ -84,6 +87,7 @@ public final class ShadeScreen extends OptionsSubScreen {
 		values.put("mcopt.shade.shadowLen", num(Shade.SHADOW_LEN));
 		values.put("mcopt.shade.map", Boolean.toString(Shade.MAP));
 		values.put("mcopt.shade.mapRadius", num(Shade.MAP_RADIUS));
+		values.put("mcopt.shade.mapEvery", Integer.toString(Shade.MAP_EVERY));
 		save(FabricLoader.getInstance().getConfigDir().resolve("mcopt.properties"), values);
 	}
 

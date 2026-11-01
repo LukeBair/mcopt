@@ -10,6 +10,12 @@ is vanilla's. Add `-Dmcopt.shade=false` on the command line to override a config
 In game: Video Settings > **mcopt Shaders...** (or Mod Menu's configure button) has every setting below as a slider that applies live,
 an on/off switch, a debug view picker and Reset to defaults. Closing the screen writes the values to `config/mcopt.properties`.
 Shadow map resolution (`mcopt.shade.mapRes`) is launch-only.
+`mcopt.shade.mapEvery` (default 6, "Shadow refresh" in the menu): the shadow map is reused between redraws, and redrawn when the
+camera moves a block, the sun moves ~0.06 degrees, or after that many frames, so block edits can show in the shadows a few frames late.
+
+Measured at 3024x1898 (dev client, frozen camera, Metal System Trace): the shade pass is the frame's biggest cost, about 3.5 ms
+median against about 1.8 ms for the rest of the frame's fragment work. Skipping the lookups on faces turned from the sun and the
+four-tap PCF early-out took it from 4.7 ms to 3.5 ms; the shadow map draw is about 0.85 ms each time it runs.
 
 Tuning (all optional): `mcopt.shade.shadow` 0..1 (0.85, shadow darkness), `.ao` 0..1 (0.8), `.grade` 0..1 (0.7, tonemap/saturation),
 `.light` 0..1 (0.8, sun/moon colour), `.shadowLen` blocks (24, contact-shadow reach), `.aoRadius` blocks (1.2), `.map` true/false (shadow map),
