@@ -91,11 +91,12 @@ public final class ShadePass {
 		Vector3f sun = new Vector3f((float) -Math.sin(sky.sunAngle), (float) Math.cos(sky.sunAngle), 0f);
 		if (Shade.SHOT > 0 && !logged && ++logFrames > 300) { logged = true; System.out.println("[mcopt] shade: sunAngle " + sky.sunAngle + " rain " + rain); }
 		ShadeShadow.sunAngle = sky.sunAngle;
-		float day = smooth(-0.04f, 0.28f, sun.y) * (1f - rain);
+		boolean sunny = net.minecraft.client.Minecraft.getInstance().level != null && Shade.sunny(net.minecraft.client.Minecraft.getInstance().level);
+		float day = sunny ? smooth(-0.04f, 0.28f, sun.y) * (1f - rain) : 0f;
 		float elev = sun.y;
-		float sunW = smooth(-0.08f, 0.15f, elev), warm = 1f - smooth(0.05f, 0.55f, elev);
-		float tr = lerp(0.62f, lerp(1f, 1.0f, warm), sunW), tg = lerp(0.72f, lerp(1f, 0.74f, warm), sunW), tb = lerp(1f, lerp(1f, 0.50f, warm), sunW);
-		float tint = Shade.LIGHT * lerp(0.5f, 1f, sunW) * (1f - rain);
+		float sunW = smooth(-0.08f, 0.15f, elev), warm = lerp(0.3f, 1f, 1f - smooth(0.05f, 0.55f, elev));
+		float tr = lerp(0.84f, lerp(1f, 1.0f, warm), sunW), tg = lerp(0.89f, lerp(1f, 0.74f, warm), sunW), tb = lerp(1f, lerp(1f, 0.50f, warm), sunW);
+		float tint = !sunny ? 0f : Shade.LIGHT * lerp(0.4f, 1f, sunW) * (1f - rain);
 		if (elev < -0.05f) sun.negate();  // the moon's direction at night
 		camera.viewRotationMatrix.transformDirection(sun);
 

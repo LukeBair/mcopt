@@ -31,6 +31,7 @@ public final class ShadeShadow {
 	private static GpuTextureView atlas;
 	private static GpuSampler atlasSampler;
 	private static boolean failed, valid;
+	private static int errors;
 	private static boolean logged;
 	/** The sun's angle as the last shade pass saw it (SkyRenderState.sunAngle); NaN before the first. */
 	static volatile float sunAngle = Float.NaN;
@@ -61,12 +62,13 @@ public final class ShadeShadow {
 		if (failed || !Shade.ON || !Shade.MAP || Shade.suppress || Float.isNaN(sunAngle) || atlas == null) return;
 		OwnTerrain own = OwnTerrain.get();
 		Minecraft mc = Minecraft.getInstance();
-		if (own == null || mc.level == null) return;
+		if (mc.level == null) atlas = null;
+		if (own == null || mc.level == null || !Shade.sunny(mc.level)) return;
 		try {
 			draw(own, mc);
 		} catch (RuntimeException | LinkageError e) {
-			failed = true;
-			System.out.println("[mcopt] shade: shadow map disabled, " + e);
+			if (++errors >= 5) failed = true;
+			System.out.println("[mcopt] shade: shadow map error " + errors + (failed ? ", disabled" : "") + ", " + e);
 			e.printStackTrace();
 		}
 	}

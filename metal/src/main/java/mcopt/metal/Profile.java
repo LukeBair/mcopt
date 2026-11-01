@@ -111,7 +111,9 @@ public final class Profile {
 			p.stringPropertyNames().forEach(k -> flags.put(k, p.getProperty(k).trim()));
 		}
 		file.stringPropertyNames().stream().filter(k -> k.startsWith("mcopt.")).forEach(k -> flags.put(k, file.getProperty(k).trim()));
-		if (flags.isEmpty()) return;
+		if (flags.isEmpty() && !Boolean.getBoolean("mcopt.shade")) return;
+		// mcopt.shade (the built-in shaders) is one switch: its shadow map draws from our terrain, so it brings mcopt.own with it
+		if (Boolean.parseBoolean(flags.getOrDefault("mcopt.shade", System.getProperty("mcopt.shade", "false")))) flags.putIfAbsent("mcopt.own", "true");
 		StringBuilder set = new StringBuilder(), kept = new StringBuilder();
 		flags.forEach((k, v) -> {
 			if (System.getProperty(k) == null) {

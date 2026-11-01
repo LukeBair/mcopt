@@ -7,22 +7,27 @@ package mcopt.metal.shade;
 public final class Shade {
 	public static final boolean ON = Boolean.getBoolean("mcopt.shade");
 	/** Sun shadow darkening 0..1. */
-	static final float SHADOW = f("mcopt.shade.shadow", 0.55f);
+	static final float SHADOW = f("mcopt.shade.shadow", 0.85f);
 	/** Ambient occlusion strength 0..1. */
-	static final float AO = f("mcopt.shade.ao", 0.6f);
+	static final float AO = f("mcopt.shade.ao", 0.8f);
 	/** Tonemap / grade amount 0..1. */
-	static final float GRADE = f("mcopt.shade.grade", 0.5f);
+	static final float GRADE = f("mcopt.shade.grade", 0.7f);
 	/** Contact shadow reach in blocks. */
 	static final float SHADOW_LEN = f("mcopt.shade.shadowLen", 24f);
 	/** Ambient occlusion radius in blocks. */
 	static final float AO_RADIUS = f("mcopt.shade.aoRadius", 1.2f);
 	/** The sun shadow map (needs mcopt.own; one cascade around the camera). */
-	static final boolean MAP = Boolean.parseBoolean(System.getProperty("mcopt.shade.map", "false"));
+	static final boolean MAP = Boolean.parseBoolean(System.getProperty("mcopt.shade.map", "true"));
 	static final int MAP_RES = Integer.getInteger("mcopt.shade.mapRes", 2048);
 	/** Half the cascade's width in blocks. */
 	static final float MAP_RADIUS = f("mcopt.shade.mapRadius", 128f);
+	/** The level has a sun (the overworld): no sky light in the Nether or the End, so no sun shadows or light colour there. */
+	static boolean sunny(net.minecraft.client.multiplayer.ClientLevel level) {
+		return level.dimensionType().hasSkyLight();
+	}
+
 	/** Sun / moon light colour by time of day, 0..1. */
-	static final float LIGHT = f("mcopt.shade.light", 0.6f);
+	static final float LIGHT = f("mcopt.shade.light", 0.8f);
 	/** 1 normals, 2 shadow, 3 ao; 0 the lit picture. */
 	static final int DEBUG = Integer.getInteger("mcopt.shade.debug", 0);
 
@@ -37,6 +42,10 @@ public final class Shade {
 	static final float YAW = f("mcopt.shade.shotYaw", 56f), PITCH = f("mcopt.shade.shotPitch", 5f);
 	/** Self-test: set the time of day (ticks) when the shot sequence starts and stop the clock (-1: leave). */
 	static final int SHOT_TIME = Integer.getInteger("mcopt.shade.shotTime", -1);
+	/** Self-test: teleport to "x,y,z" when the sequence starts. */
+	static final String SHOT_POS = System.getProperty("mcopt.shade.shotPos", "");
+	/** Self-test: a command to run when the sequence starts (e.g. "execute in minecraft:the_nether run tp @s 0 70 0"). */
+	static final String SHOT_CMD = System.getProperty("mcopt.shade.shotCmd", "");
 	static int debugNow = DEBUG;
 	private static long t0, tStep;
 	private static int frames, step, pending = -1;
@@ -57,6 +66,8 @@ public final class Shade {
 		if (t0 == 0) {
 			t0 = now;
 			apply(SEQ[0]);
+			if (!SHOT_POS.isEmpty()) mc.player.connection.sendCommand("execute in minecraft:overworld run tp @s " + SHOT_POS.replace(',', ' '));
+			if (!SHOT_CMD.isEmpty()) mc.player.connection.sendCommand(SHOT_CMD.replace('#', ' '));
 			if (SHOT_TIME >= 0) {
 				mc.player.connection.sendCommand("gamerule advance_time false");
 				mc.player.connection.sendCommand("time set " + SHOT_TIME);
@@ -85,6 +96,8 @@ public final class Shade {
 
 	private static void apply(String name) {
 		suppress = name.equals("off");
+		var p = net.minecraft.client.Minecraft.getInstance().player;
+		if (p != null) p.sendSystemMessage(net.minecraft.network.chat.Component.literal(suppress ? "shade OFF" : "shade ON"));
 		debugNow = name.startsWith("d") ? Integer.parseInt(name.substring(1)) : 0;
 	}
 

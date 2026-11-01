@@ -1,5 +1,23 @@
 # Shaders on the Metal path
 
+## How to test
+
+Run: `./gradlew :metal:runClient -PmcoptArgs="-Dmcopt.shade=true"` (then pick a world), or put `mcopt.shade=true` on its own line in
+`config/mcopt.properties`. That one switch turns on everything: the sun shadow map (and `mcopt.own`, which it draws from), screen-space contact
+shadows, ambient occlusion, warm sun / cool shade / moon colour by time of day, and a filmic grade. Without it nothing extra runs and the picture
+is vanilla's. Add `-Dmcopt.shade=false` on the command line to override a config line.
+
+Tuning (all optional): `mcopt.shade.shadow` 0..1 (0.85, shadow darkness), `.ao` 0..1 (0.8), `.grade` 0..1 (0.7, tonemap/saturation),
+`.light` 0..1 (0.8, sun/moon colour), `.shadowLen` blocks (24, contact-shadow reach), `.aoRadius` blocks (1.2), `.map` true/false (shadow map),
+`.mapRes` (2048), `.mapRadius` blocks (128, half-width of the one cascade), `.debug` 1 normals / 2 shadow / 3 AO.
+Self-test: `.shot=100 .shotName=N .shotSeq=off,on,d2 .shotTime=1000 .shotPos=x,y,z .shotYaw/.shotPitch .shotDelay=40 .shotCmd=...`
+(`#` is a space in shotCmd); it writes `run/screenshots/N_<step>.png` and says "shade ON/OFF" in chat per step.
+
+Known limits: water and ice (translucent) write no depth, so they get no AO or shadow of their own (the ground under them does, a bit grainy);
+leaves show dappled shadow noise; one cascade, so far shadows (>128 blocks) are screen-space only; Nether/End have no sun and fall back to
+AO + grade only; entities do not cast into the map yet; no bloom or water shading yet.
+
+
 Iris shaderpacks need Sodium, which mcopt replaces, so they don't run here. This note compares the two ways to get
 shaders back and says which one we build first.
 

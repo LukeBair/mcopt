@@ -44,7 +44,7 @@ float hash12(vec2 p) {
 vec3 tonemap(vec3 c, float amount) {
     // Soft S-curve around mid grey plus a little saturation: keeps blacks and whites where vanilla has them.
     vec3 s = c * c * (3.0 - 2.0 * c);
-    c = mix(c, s, 0.55 * amount);
+    c = mix(c, s, 0.8 * amount);
     float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
     c = mix(vec3(l), c, 1.0 + 0.22 * amount);
     return clamp(c, 0.0, 1.0);
@@ -57,14 +57,14 @@ float mapShadow(vec3 p, vec3 n, vec3 L, float jitter, out float edge) {
     float tanT = sqrt(1.0 - cosT * cosT) / cosT;
     float texel = ShadowP.x;
     // Normal offset grows with the slope, so grazing surfaces do not self-shadow.
-    vec3 q = p + n * texel * (1.0 + 1.5 * min(tanT, 4.0)) * 1.4;
+    vec3 q = p + n * texel * (2.0 + 2.0 * min(tanT, 3.0));
     vec4 c = ShadowM * vec4(q, 1.0);
     vec3 s = c.xyz / c.w;
     vec2 uv = s.xy * 0.5 + 0.5;
     edge = 1.0 - smoothstep(0.82, 0.98, max(abs(s.x), abs(s.y)));
     if (edge <= 0.0 || s.z <= 0.0 || s.z >= 1.0) { edge = 0.0; return 0.0; }
-    float bias = (texel * (0.6 + 1.0 * min(tanT, 4.0))) / ShadowP.w;
-    float radius = ShadowP.y * 2.2;
+    float bias = (texel * (1.5 + 1.5 * min(tanT, 3.0))) / ShadowP.w;
+    float radius = ShadowP.y * 3.0;
     float acc = 0.0;
     const int N = 16;
     float rot = jitter * 6.2831853;
@@ -173,11 +173,11 @@ void main() {
     if (debug == 3) { fragColor = vec4(vec3(1.0 - ao), 1.0); return; }
 
     // Shadow: darker and cooler (the sky fills it); ao: darker, neutral.
-    vec3 shadowTint = vec3(0.70, 0.80, 1.0);
-    col *= mix(vec3(1.0), shadowTint * (1.0 - 0.18 * Params0.x), shadow * Params0.x);
-    col *= 1.0 - ao * Params0.y * 0.6;
+    vec3 shadowTint = vec3(0.40, 0.50, 0.78);
+    col *= mix(vec3(1.0), shadowTint, shadow * Params0.x);
+    col *= 1.0 - ao * Params0.y * 0.9;
     // Light colour: warm low sun, white noon, cool moon, only where the light reaches (facing it and not in shadow).
-    col *= mix(vec3(1.0), Tint.rgb / dot(Tint.rgb, vec3(0.3333)), Tint.a * lit * (1.0 - shadow));
+    col *= mix(vec3(1.0), Tint.rgb / dot(Tint.rgb, vec3(0.3333)), Tint.a * lit * (1.0 - shadow)) * (1.0 + 0.12 * lit * (1.0 - shadow) * Tint.a);
 
     col = tonemap(col, Params0.z);
     fragColor = vec4(col, src.a);
