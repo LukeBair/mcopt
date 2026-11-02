@@ -1905,11 +1905,32 @@ static float seaWave(int2 b, float T) {
 	return h;
 }
 
-// mcopt shaders: the swash cycle at a block corner, 0..1: the sea surges up the shore and draws back every ~8 s, its phase drifting
-// slowly along the coast so neighbouring stretches are a little out of step
-static float seaSurge(int2 b, float T) {
-	float2 p = float2(b & 4095);
-	return smoothstep(-0.3, 1.0, sin(T * 0.8 + p.x * 0.045 + p.y * 0.031));
+// mcopt shaders: breakers, shared by the sea (own_vs) and the swash sheets (own_fs) so they stay in step. Every ~7 s a crest rolls in
+// from 5 blocks out, crashes at the shore at u = BREAK_CRASH and runs up the beach, then draws back; the phase drifts along the coast
+// so neighbouring stretches are out of step. p: world xz mod 1024 (the drift wraps with it); T: seconds (171 cycles per 1200 s day
+// wrap). Returns u 0..1 through the current wave, n its number.
+#define BREAK_CRASH 0.4
+static float breakerPhase(float2 p, float T, thread float &n) {
+	const float W = 6.2831853 / 1024.0;
+	float c = T * (171.0 / 1200.0) + (p.x * 6.0 + p.y * 4.0) / 1024.0 + 0.08 * sin(p.x * W * 3.0 + p.y * W * 2.0)
+		+ 0.05 * sin(p.y * W * 5.0 - p.x * W * 3.0);
+	n = floor(c);
+	return c - n;
+}
+
+// mcopt shaders: wave n's size, 0.7..1.3 (sets of bigger and smaller breakers)
+static float breakerSize(float n) {
+	float3 p3 = fract(float3(n, n * 1.37, n * 0.71) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return 0.7 + 0.6 * fract((p3.x + p3.y) * p3.z);
+}
+
+// mcopt shaders: how far up the beach the wave at u has run, 0..1 of its full run-up: nothing until it crashes, a quick surge in,
+// then a slow draw back
+static float breakerReach(float u) {
+	if (u < BREAK_CRASH) return 0.0;
+	float v = (u - BREAK_CRASH) / (1.0 - BREAK_CRASH);
+	return v < 0.22 ? 1.0 - (1.0 - v / 0.22) * (1.0 - v / 0.22) : pow(1.0 - (v - 0.22) / 0.78, 1.4);
 }
 
 static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df, device const void *arenaRaw, constant Projection &proj,
@@ -1948,26 +1969,42 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 			int2 corner = origin.xz + int2(round(float2(v.pos.xz)));
 			float h = seaWave(corner, g.GameTime * 1200.0);
 			float2 xz = float2(origin.xz & 1023) + float2(v.pos.xz);
+			// the full run-up of a mid-sized breaker here (blocks): 1.6 calm, longer in rough weather, scaled by the ocean share
+			float amp32 = df.wave.x * 32.0;
+			float runUp = min(1.6 + 0.4 * (amp32 - 3.0), 3.2);
 			if (swash) {
-				// how far up the beach the sea runs at this corner now (blocks): the surge, a little farther on a crest, longer in rough weather
+				// own_fs follows the breaker that reaches this sheet (breakerReach) out to its distance up the beach
 				uint low = tag - 101u;
 				float q = float(low / 5u) * 0.25;
-				float surge = seaSurge(corner, g.GameTime * 1200.0);
-				float reach = surge * (0.8 + 0.2 * h) * (1.0 + df.wave.x * 32.0 * 0.3) * q;
-				return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, 0.0, float4(xz, -1.0 - float(low % 5u), reach));
+				return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, 0.0, float4(xz, -1.0 - float(low % 5u), runUp * q));
 			}
-			// Sea water: the surface moved by the wave field at this corner in 1/32-block steps, scaled by the corner's ocean share and
-			// taller where it's shallow. Neighbouring blocks share their corners, so the sea stays closed.
+			// Sea water: the surface moved at this corner in 1/32-block steps by the swell and, near the shore, the breakers, scaled by
+			// the corner's ocean share and taller where it's shallow. Neighbouring blocks share their corners, so the sea stays closed.
 			uint low = tag - 1u;
 			float k = float(low % 5u), sh = float(low / 5u % 4u), q = float(low / 20u) * 0.25;
-			float surge = seaSurge(corner, g.GameTime * 1200.0);
-			// the swell, plus in the shallows the surge lifting the water toward the shore's top as it runs up the beach
-			float lift = h * df.wave.x * (1.0 + 0.5 * sh) + surge * sh / 3.0 * df.wave.x * 0.8;
-			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(lift * q * 32.0) / 32.0 : 0.0;
-			// foam cover 0..1: on shore blocks, thickest as the surge comes in; in the shallows, where the crests break; more in rough weather
-			float foam = (k > 0.0 ? (0.3 + 0.12 * k) * (0.5 + 0.8 * surge) : 0.0) + sh / 3.0 * smoothstep(0.3, 0.8, h) * 0.6;
+			float n;
+			float u = breakerPhase(float2(corner & 1023), g.GameTime * 1200.0, n);
+			float size = breakerSize(n);
+			// the crest: a ridge from 5 blocks out to the shore (k 0) over the wave's first part, taller as it comes in, gone once it crashes
+			float sc = -5.0 + 5.0 * u / BREAK_CRASH, dc = (-k - sc) / 1.1;
+			float crest = exp(-dc * dc) * (1.0 - smoothstep(BREAK_CRASH - 0.05, BREAK_CRASH + 0.04, u)) * (4.0 - k) / 4.0;
+			// by the beach: the water draws back just before, then heaves up flush with the shore's top as it crashes and settles
+			float edge = saturate(1.0 - k / 2.0);
+			float du = (u - BREAK_CRASH - 0.02) / 0.06;
+			float crash = exp(-du * du) * edge;
+			float draw = smoothstep(BREAK_CRASH - 0.18, BREAK_CRASH - 0.05, u) * (1.0 - smoothstep(BREAK_CRASH - 0.05, BREAK_CRASH, u)) * edge;
+			float lift = h * df.wave.x * (1.0 + 0.5 * sh) + (crest * (2.0 + 0.5 * amp32) * size + crash * 3.5 * size - draw * 2.0) / 32.0;
+			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(min(lift * q, 3.5 / 32.0) * 32.0) / 32.0 : 0.0;
+			// foam cover: a thin line along the shore; on the crest once it breaks (inside ~3 blocks) and trailing seaward behind it; a
+			// burst over the shore blocks as it crashes, boiling away as it draws back; crests breaking in the shallows; more in storms
+			float breaking = smoothstep(-3.5, -1.0, sc);
+			float trail = -k < sc ? exp(-(sc + k) / 1.5) * breaking * (1.0 - smoothstep(BREAK_CRASH, BREAK_CRASH + 0.1, u)) : 0.0;
+			float boil = u > BREAK_CRASH ? saturate(1.0 - (u - BREAK_CRASH) / 0.45) * edge : 0.0;
+			float foam = 0.3 * saturate(1.0 - k) + (crest * breaking * 1.2 + trail * 0.8 + crash * 1.4 + boil * 0.7) * size
+				+ sh / 3.0 * smoothstep(0.3, 0.8, h) * 0.4;
 			foam *= 0.8 + 0.2 * df.wave.y;
-			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff, float4(xz, foam * q, h * q));
+			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff,
+				float4(xz, foam * q, (h + 1.5 * crest * size + crash) * q));
 		}
 	}
 	return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel);
@@ -2382,9 +2419,11 @@ static float seaHash(float2 p) {
 // mcopt shaders: tagged sea water's look. Crests a touch lighter and troughs darker, and blocky foam where the vertex stage asks for
 // it (shore blocks, breaking crests in the shallows): texel-sized cells (16 a block) of drifting value noise, thicker the higher the
 // foam level, lit as the water is.
-// A swash sheet (water.z -1 - its distance up the beach, blocks; water.w the run-up's reach): shown out to the reach in 1/32-block
-// steps, judged at each texel's centre so its edge is blocky, with a ragged line of foam along the edge; past it, nothing.
-static float4 swashSheet(float4 color, VOut in) {
+// A swash sheet (water.z -1 - its distance up the beach, blocks; water.w a full run-up there): the breaker's water out to how far it
+// has run (breakerReach), in 1/32-block steps judged at each texel's centre so its edge is blocky, with a ragged line of foam along
+// the edge (thick as it surges in, broken as it draws back) and scraps of foam riding with it; behind the receding water the sand
+// stays dark and wet out to where the wave reached, drying until the next one; past that, nothing.
+static float4 swashSheet(float4 color, VOut in, constant Globals &g) {
 	float2 p = in.water.xy;
 	float dist = -in.water.z - 1.0;
 	// the distance at this texel's centre, from the field's gradient over the face (screen derivatives)
@@ -2394,18 +2433,39 @@ static float4 swashSheet(float4 color, VOut in) {
 	float2 grad = abs(det) > 1e-10 ? float2(dx * py.y - dy * px.y, px.x * dy - py.x * dx) / det : float2(0.0);
 	float2 cell = floor(p * 16.0);
 	float dc = dist + dot(grad, (cell + 0.5) / 16.0 - p);
-	float reach = floor(in.water.w * 32.0) / 32.0 + (seaHash(cell) - 0.5) * 0.12;
-	if (in.water.w <= 0.0 || dc > reach) discard_fragment();
+	if (in.water.w <= 0.0) discard_fragment();
+	float n;
+	float u = breakerPhase(p, g.GameTime * 1200.0, n);
+	float full = in.water.w * breakerSize(n), r = breakerReach(u);
+	float ragged = (seaHash(cell) - 0.5) * 0.12;
+	float reach = floor(full * r * 32.0) / 32.0 + ragged;
+	if (r <= 0.0 || dc > reach) {
+		// wet sand: out to this wave's run-up once it has peaked, else the last one's, fading as it dries
+		float peak = BREAK_CRASH + (1.0 - BREAK_CRASH) * 0.22;
+		bool past = u >= peak;
+		float wetTo = (past ? full : in.water.w * breakerSize(n - 1.0)) + ragged;
+		float wet = 0.3 * exp(-(past ? u - peak : u + 1.0 - peak) * 2.5);
+		if (dc > wetTo || wet < 0.02) discard_fragment();
+		return float4(0.0, 0.0, 0.0, wet);
+	}
 	float3 tint = getColor(in).rgb;
 	float lit = max(tint.r, max(tint.g, tint.b));
-	if (reach - dc < 0.22) return float4(float3(0.9, 0.95, 1.0) * lit, 0.92);
-	return float4(color.rgb * 1.08, color.a * 0.75);
+	float4 white = float4(float3(0.9, 0.95, 1.0) * lit, 0.92);
+	bool surging = u < BREAK_CRASH + (1.0 - BREAK_CRASH) * 0.22;
+	float band = surging ? 0.3 : 0.1 + 0.15 * r;
+	if (reach - dc < band && (surging || seaHash(cell + 17.0) > 0.35)) return white;
+	// foam scraps carried up the beach and back with the edge (the pattern shifted along the slope by the reach, a texel at a time)
+	float gl = length(grad);
+	float2 drift = gl > 1e-4 ? grad / gl * floor(full * r * 16.0) / 16.0 : float2(0.0);
+	float2 scrap = floor((p - drift) * 16.0);
+	if (reach - dc < 1.3 && seaHash(scrap) > 0.84 + 0.1 * (reach - dc)) return white;
+	return float4(color.rgb * 1.08, color.a * mix(0.6, 0.8, saturate((reach - dc) / 0.8)));
 }
 
 static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
-	if (in.water.z < -0.5) return swashSheet(color, in);
+	if (in.water.z < -0.5) return swashSheet(color, in, g);
 	if (in.water.z <= 0.0 && in.water.w == 0.0) return color;
-	color.rgb *= 1.0 + 0.1 * in.water.w;
+	color.rgb *= 1.0 + 0.15 * clamp(in.water.w, -1.0, 2.0);
 	if (in.water.z > 0.0) {
 		float T = g.GameTime * 1200.0;
 		float2 cell = floor(in.water.xy * 16.0);

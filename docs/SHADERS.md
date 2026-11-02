@@ -44,12 +44,16 @@ the composite shifts the colour of what they light toward it, where the sun isn'
 an ocean or beach biome is tagged per vertex when meshed (ShadeWater, in the vertex alpha), and terrain.metal raises or lowers the
 surface at each block corner in 1/32-block steps (half a texture pixel) by a field of crossing swells. Per corner, so neighbouring
 blocks share their edges; the amplitude is scaled by how many of the corner's 4 columns are ocean or beach, so the waves fade out over
-a block at a biome's edge instead of leaving a step. The amplitude is 2 steps calm, 4 in rain, 7 in a thunderstorm (DrawFrame.wave),
-up to 2.5x that in the shallows (shoaling, from the water's depth around the corner). Crests are a touch lighter. Foam is blocky
-texel-sized drifting noise: on shore blocks (touching non-water), surging as each crest arrives, and in the shallows where the crests
-break. Swash: beach blocks (a sturdy top at sea level, air above) within 3 blocks of the sea get a sheet of the nearest sea water's
-top face half a texture pixel over them, shown only out to how far the sea runs up the beach on an ~8 s surge cycle (in 1/32-block steps,
-judged per texel so the edge is blocky), with foam along its edge; so the sea washes up over the shore block and a few blocks inland,
+a block at a biome's edge instead of leaving a step. The amplitude is 3 steps calm, 5 in rain, 8 in a thunderstorm (DrawFrame.wave),
+up to 2.5x that in the shallows (shoaling, from the water's depth around the corner). Crests are lighter, troughs darker. Breakers:
+each corner is also tagged with its distance from the shore (0..4 blocks), and every ~7 s (the phase drifting along the coast, each
+wave a random 0.7..1.3 in size) a crest rolls in from 5 blocks out, growing as it comes, breaking into foam inside ~3 blocks with
+whitewater trailing behind it; the shallows draw back just before it lands, then the water by the beach heaves up flush with the
+shore's top in a burst of foam that boils away. Foam is blocky texel-sized drifting noise, with a thin line along the shore at all
+times. Swash: beach blocks (a sturdy top at sea level, air above) within 3 blocks of the sea get a sheet of the nearest sea water's
+top face half a texture pixel over them; the same breaker, once it crashes, runs up it (in 1/32-block steps, judged per texel so the
+edge is blocky) with a thick foam edge and scraps of foam riding along, then draws back with a broken edge, leaving the sand dark and
+wet out to where it reached, drying until the next one. Run-up is about 1.6 blocks calm, up to 3.2 in storms;
 farther in storms. Only blocks at sea level get sheets (not the step up behind them). Toggling it remeshes the world.
 `mcopt.shade.rays` (default true, "Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
 camera from the heightmaps (open to the sky to the ground, roofed by leaves 3 blocks away on most sides), keeps the 12 nearest

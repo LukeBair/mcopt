@@ -16,9 +16,10 @@ import org.lwjgl.system.MemoryUtil;
 
 /**
  * Blocky ocean waves, breaking foam and swash. When a chunk is meshed, the water at the sea's surface (a source at sea level, open to
- * the sky) near an ocean or beach biome is tagged in its vertex alpha, per vertex: 255 - t, t 1..100 for sea water (1 + k + 5s + 20q:
- * k 0..4 non-water neighbours of its block (shore foam), and at the vertex's block corner s 0..3 how shallow the water is and q 0..4
- * how many of the 4 columns around it are ocean or beach). terrain.metal's own_vs raises or lowers the surface at each corner in
+ * the sky) near an ocean or beach biome is tagged in its vertex alpha, per vertex: 255 - t, t 1..100 for sea water (1 + k + 5s + 20q,
+ * all at the vertex's block corner: k 0..4 its distance from the shore (the nearest non-water column at sea level, blocks; 4: 4 or
+ * more), s 0..3 how shallow the water is and q 0..4 how many of the 4 columns around it are ocean or beach). Breakers roll in along
+ * k and crash at the shore, in step with the swash. terrain.metal's own_vs raises or lowers the surface at each corner in
  * 1/32-block steps (half a texture pixel) by a wave field moving over the sea, scaled by q (so the waves fade out over a block at a
  * biome's edge instead of leaving a seam) and taller in the shallows, where their crests break into foam; own_fs draws the foam.
  * Corners are shared by neighbouring blocks, so the surface stays closed.
@@ -41,8 +42,14 @@ public final class ShadeWater {
 		return Shade.ON && Shade.WAVES;
 	}
 
-	/** Sea water's surroundings for its per-corner tags: ocean and depth for the 3x3 columns around it (x fastest), its shore count. */
-	public record Sea(int x, int z, int shore, boolean[] ocean, int[] depth) {
+	/** How far out breakers are tracked (Sea.shore), blocks. */
+	private static final int BREAK = 4;
+
+	/**
+	 * Sea water's surroundings for its per-corner tags: ocean and depth for the 3x3 columns around it (x fastest), and each of its 4
+	 * corners' distance from the shore (corner x + 2 z).
+	 */
+	public record Sea(int x, int z, int[] shore, boolean[] ocean, int[] depth) {
 		int tag(float vx, float vz) {
 			int cx = corner(vx, this.x), cz = corner(vz, this.z), q = 0, depth = 0;
 			for (int dz = cz - 1; dz <= cz; dz++) {
@@ -54,7 +61,7 @@ public final class ShadeWater {
 			}
 			// shallow 0 (4 deep, averaged over the corner's columns; land counts 0) .. 3
 			int s = depth >= 14 ? 0 : depth >= 10 ? 1 : depth >= 6 ? 2 : 3;
-			return 1 + this.shore + 5 * s + 20 * q;
+			return 1 + this.shore[cx + 2 * cz] + 5 * s + 20 * q;
 		}
 	}
 
@@ -104,9 +111,32 @@ public final class ShadeWater {
 			depth[i] = depth(level, m);
 		}
 		if (!any) return null;
-		int shore = 0;
-		for (Direction d : Direction.Plane.HORIZONTAL) {
-			if (!level.getFluidState(pos.relative(d)).is(FluidTags.WATER)) shore++;
+		// the columns out to BREAK + 1 around it that are land at sea level (x fastest), then each corner's distance to the nearest:
+		// 0 when one touches the corner
+		int r = BREAK + 1, side = 2 * r + 1;
+		boolean[] land = new boolean[side * side];
+		boolean anyLand = false;
+		for (int dz = -r; dz <= r; dz++) {
+			for (int dx = -r; dx <= r; dx++) {
+				boolean l = !level.getFluidState(m.set(pos.getX() + dx, pos.getY(), pos.getZ() + dz)).is(FluidTags.WATER);
+				land[dx + r + (dz + r) * side] = l;
+				anyLand |= l;
+			}
+		}
+		int[] shore = {BREAK, BREAK, BREAK, BREAK};
+		if (anyLand) {
+			for (int c = 0; c < 4; c++) {
+				int cx = c & 1, cz = c >> 1, best = BREAK;
+				for (int dz = -r; dz <= r; dz++) {
+					for (int dx = -r; dx <= r; dx++) {
+						if (!land[dx + r + (dz + r) * side]) continue;
+						// (column dx spans [dx, dx + 1] from the block's corner 0; its distance from corner cx)
+						int ex = dx >= cx ? dx - cx : cx - dx - 1, ez = dz >= cz ? dz - cz : cz - dz - 1;
+						best = Math.min(best, Math.max(ex, ez));
+					}
+				}
+				shore[c] = best;
+			}
 		}
 		return new Sea(pos.getX(), pos.getZ(), shore, ocean, depth);
 	}
@@ -193,8 +223,8 @@ public final class ShadeWater {
 		MemoryUtil.memPutFloat(d + 8, 1f);  // (tags are decoded, the alpha restored, even while the waves are flat)
 		if (!Shade.enabled || level == null) return;
 		float rain = level.getRainLevel(1f), thunder = level.getThunderLevel(1f);
-		// Calm: 2 steps of 1/32 either way; rain doubles it; a storm adds three more.
-		float amp = (2f + 2f * rain + 3f * thunder) / 32f;
+		// Calm: 3 steps of 1/32 either way; rain adds two; a storm three more.
+		float amp = (3f + 2f * rain + 3f * thunder) / 32f;
 		MemoryUtil.memPutFloat(d, amp);
 		MemoryUtil.memPutFloat(d + 4, 1f + rain + thunder);
 	}
