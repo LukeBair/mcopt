@@ -1994,17 +1994,22 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 			float crash = exp(-du * du) * edge;
 			float draw = smoothstep(BREAK_CRASH - 0.18, BREAK_CRASH - 0.05, u) * (1.0 - smoothstep(BREAK_CRASH - 0.05, BREAK_CRASH, u)) * edge;
 			float lift = h * df.wave.x * (1.0 + 0.5 * sh) + (crest * (2.0 + 0.5 * amp32) * size + crash * 3.5 * size - draw * 2.0) / 32.0;
-			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(min(lift * q, 3.5 / 32.0) * 32.0) / 32.0 : 0.0;
+			float yOff = round(min(lift * q, 3.5 / 32.0) * 32.0) / 32.0;
+			// at the shoreline (corners touching land) the water rises to the swash sheet's height (half a pixel over the beach's
+			// top) while the breaker is up the beach, so the sea runs straight onto the sheet with no step of sand between them
+			float r = breakerReach(u);
+			if (k < 0.5 && q > 0.0) yOff = max(yOff, (1.0 + 1.0 / 32.0 - 0.8889) * smoothstep(0.0, 0.15, r));
+			if (abs(fract(float(v.pos.y)) - 0.8889) >= 0.03) yOff = 0.0;
 			// foam cover: a thin line along the shore; on the crest once it breaks (inside ~3 blocks) and trailing seaward behind it; a
 			// burst over the shore blocks as it crashes, boiling away as it draws back; crests breaking in the shallows; more in storms
 			float breaking = smoothstep(-3.5, -1.0, sc);
 			float trail = -k < sc ? exp(-(sc + k) / 1.5) * breaking * (1.0 - smoothstep(BREAK_CRASH, BREAK_CRASH + 0.1, u)) : 0.0;
 			float boil = u > BREAK_CRASH ? saturate(1.0 - (u - BREAK_CRASH) / 0.45) * edge : 0.0;
-			float foam = 0.3 * saturate(1.0 - k) + (crest * breaking * 1.2 + trail * 0.8 + crash * 1.4 + boil * 0.7) * size
+			float foam = 0.6 * saturate(1.0 - k / 1.5) + 0.5 * r * edge + (crest * breaking * 1.2 + trail * 0.8 + crash * 1.4 + boil * 0.7) * size
 				+ sh / 3.0 * smoothstep(0.3, 0.8, h) * 0.4;
 			foam *= 0.8 + 0.2 * df.wave.y;
 			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff,
-				float4(xz, foam * q, (h + 1.5 * crest * size + crash) * q));
+				float4(xz, foam * min(q * 2.0, 1.0), (h + 1.5 * crest * size + crash) * q));
 		}
 	}
 	return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel);
@@ -2458,7 +2463,10 @@ static float4 swashSheet(float4 color, VOut in, constant Globals &g) {
 	float gl = length(grad);
 	float2 drift = gl > 1e-4 ? grad / gl * floor(full * r * 16.0) / 16.0 : float2(0.0);
 	float2 scrap = floor((p - drift) * 16.0);
-	if (reach - dc < 1.3 && seaHash(scrap) > 0.84 + 0.1 * (reach - dc)) return white;
+	// (and right after the crash most of the sheet is whitewater, thinning to scraps as it draws back: a narrow beach clips the edge)
+	float v = (u - BREAK_CRASH) / (1.0 - BREAK_CRASH);
+	float cover = 0.7 * saturate(1.0 - (v - 0.22) / 0.4);
+	if (seaHash(scrap) < max(cover, reach - dc < 1.3 ? 0.16 - 0.1 * (reach - dc) : 0.0)) return white;
 	return float4(color.rgb * 1.08, color.a * mix(0.6, 0.8, saturate((reach - dc) / 0.8)));
 }
 
@@ -2474,7 +2482,7 @@ static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
 		f = f * f * (3.0 - 2.0 * f);
 		float n = mix(mix(seaHash(i), seaHash(i + float2(1, 0)), f.x), mix(seaHash(i + float2(0, 1)), seaHash(i + float2(1, 1)), f.x), f.y);
 		n = n * 0.75 + 0.25 * seaHash(cell + floor(T * 1.5));
-		if (n > 1.0 - 0.75 * min(in.water.z, 1.2)) {
+		if (n > 0.92 - 0.8 * min(in.water.z, 1.0)) {
 			float3 tint = getColor(in).rgb;
 			float lit = max(tint.r, max(tint.g, tint.b));
 			color = float4(float3(0.9, 0.95, 1.0) * lit, max(color.a, 0.9));
