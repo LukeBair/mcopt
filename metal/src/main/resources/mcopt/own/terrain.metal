@@ -1617,6 +1617,7 @@ constant bool F_WATER = (is_function_constant_defined(TRANSLUCENT) ? TRANSLUCENT
 struct VOut {
 	float4 pos [[position]];
 	float4 water [[function_constant(F_WATER)]];  // world xz (mod 1024), foam level (swash: -1 - distance up the beach), wave height -1..1 (swash: reach; 0: untagged)
+	float2 shore [[function_constant(F_WATER)]];  // tagged sea: distance from the shore (blocks, 0..4: 4 or more), ocean share 0..1; else 0
 	float sphericalVertexDistance [[function_constant(F_VARY)]];
 	float cylindricalVertexDistance [[function_constant(F_RICH)]];
 	float4 vertexColor [[function_constant(F_FLOATCOLOR)]];
@@ -1677,7 +1678,8 @@ constant bool CPU_CLIP [[function_constant(3)]];
 static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df, device const void *arenaRaw, constant Projection &proj,
 	constant Globals &g, constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel);
 static VOut ownShade(Vtx v, int3 origin, int uploadMs, constant DrawFrame &df, constant Projection &proj, constant Globals &g,
-	constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel, float yOff = 0.0, float4 wat = float4(0));
+	constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel, float yOff = 0.0, float4 wat = float4(0),
+	float2 shore = float2(0));
 
 // -Dmcopt.own.mesh.qrec (OWN_QREC, prepended by OwnTerrain; OwnQrec): every solid / cutout quad id is a 40-byte record id, and
 // its corner c is decoded into exactly the compact vertex it replaces. Words: 0 corner selections (bits 3c + axis: x / y / z takes
@@ -2000,15 +2002,10 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 			float lift = h * df.wave.x * (1.0 + 0.5 * sh) + (crest * (2.0 + 0.5 * amp32) * size + crash * 3.5 * size - draw * 2.0) / 32.0;
 			float yOff = round(min(lift * q, 3.5 / 32.0) * 32.0) / 32.0;
 			if (abs(fract(float(v.pos.y)) - 0.8889) >= 0.03) yOff = 0.0;
-			// foam level 0..1 (own_fs covers about that share of the surface): a band along the shore (full at the waterline, gone 2.5
-			// blocks out) that swells as each breaker lands and drains as it draws back; the breaking crest as it rolls in; whitecaps on
-			// the tallest swell in rain and storms
-			float breaking = smoothstep(-3.5, -1.0, sc);
-			float landed = u > BREAK_CRASH ? exp(-(u - BREAK_CRASH) * 4.0) : 0.0;
-			float foam = saturate(1.0 - k / 2.5) * (0.55 + 0.45 * landed * size) + crest * breaking * 0.9
-				+ smoothstep(0.7, 1.0, h) * saturate(df.wave.y - 1.0) * 0.6;
+			// foam: whitecaps on the tallest swell in rain and storms here; the breakers' foam own_fs works out from the shore distance
+			float caps = smoothstep(0.7, 1.0, h) * saturate(df.wave.y - 1.0) * 0.6;
 			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff,
-				float4(xz, foam * min(q * 2.0, 1.0), (h + 1.5 * crest * size + crash) * q));
+				float4(xz, caps * min(q * 2.0, 1.0), (h + 1.5 * crest * size + crash) * q), float2(k, q));
 		}
 	}
 	return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel);
@@ -2016,13 +2013,16 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 
 // a vertex as vanilla's terrain.vsh shades it (ownVertex's fetched one, or own_vs' from a quad record)
 static VOut ownShade(Vtx v, int3 origin, int uploadMs, constant DrawFrame &df, constant Projection &proj, constant Globals &g,
-	constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel, float yOff, float4 wat) {
+	constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel, float yOff, float4 wat, float2 shore) {
 	VOut o;
 	rel = float3(v.pos);
 	int3 cbp = int3(g.CameraBlockPos);
 	float3 pos = float3(v.pos) + float3(origin - cbp) + float3(g.CameraOffset);
 	pos.y += yOff;
-	if (F_WATER) o.water = wat;
+	if (F_WATER) {
+		o.water = wat;
+		o.shore = shore;
+	}
 	if (CPU_CLIP) o.pos = df.clip * float4(pos, 1.0);
 	else o.pos = (proj.ProjMat * t.ModelViewMat) * float4(pos, 1.0);
 	o.pos.y = -o.pos.y;  // the backend's row order (SPIRV-Cross flip_vert_y)
@@ -2466,19 +2466,69 @@ static float4 swashSheet(float4 color, VOut in, constant Globals &g) {
 	return float4(color.rgb * 1.08, color.a * mix(0.6, 0.8, saturate((reach - dc) / 0.8)));
 }
 
+// mcopt shaders: the breakers' foam level (0..1, about the share of the surface it covers) at shore distance d (blocks) and phase u
+// (breakerPhase) of a wave of this size, the previous one's prev. In step with own_vs' crest and crash: the crest breaks into foam
+// inside ~3.5 blocks with whitewater trailing seaward behind it; as it lands a burst covers the first block or so; then the foam line
+// slides back out to ~2.5 blocks as the water draws back, thinning and leaving lace on the shore side of it, and drifts on out and
+// fades as the next crest comes in. The waterline keeps a thin rim, thicker just after each wave lands.
+static float breakerFoam(float d, float u, float size, float prev) {
+	float f;
+	if (u < BREAK_CRASH) {
+		float a = u / BREAK_CRASH;
+		float dc = 5.0 - 5.0 * a, x = d - dc;  // (the crest's distance from the shore; x > 0 seaward of it)
+		float breaking = 1.0 - smoothstep(1.0, 3.5, dc);
+		f = breaking * (0.95 * exp(-x * x / 0.5) + (x > 0.0 ? 0.6 * exp(-x / 1.4) : 0.0)) * size;
+		float lo = d - (2.5 + 1.2 * a);
+		f = max(f, exp(-lo * lo / 0.35) * 0.4 * prev * (1.0 - a));
+		return max(f, 0.25 * (1.0 - smoothstep(0.0, 0.35, d)));
+	}
+	float v = (u - BREAK_CRASH) / (1.0 - BREAK_CRASH);
+	float line = 2.5 * smoothstep(0.0, 1.0, v), lx = d - line;
+	float burst = (1.0 - smoothstep(0.6, 1.5, d)) * saturate(1.0 - v / 0.25);
+	f = max(burst, exp(-lx * lx / 0.35) * (0.85 - 0.45 * v)) * size;
+	f += lx < 0.0 ? 0.3 * (1.0 - v) * size : 0.0;
+	return max(f, (0.25 + 0.25 * (1.0 - v)) * (1.0 - smoothstep(0.0, 0.35, d)));
+}
+
+// mcopt shaders: value noise over cells (blended between the corners of a grid `scale` cells wide), so foam comes in patches
+static float seaCluster(float2 cell, float scale) {
+	float2 q = cell / scale, i = floor(q), f = fract(q);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(seaHash(i), seaHash(i + float2(1, 0)), f.x), mix(seaHash(i + float2(0, 1)), seaHash(i + float2(1, 1)), f.x), f.y);
+}
+
 static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
 	if (in.water.z < -0.5) return swashSheet(color, in, g);
-	if (in.water.z <= 0.0 && in.water.w == 0.0) return color;
+	if (in.water.z <= 0.0 && in.water.w == 0.0 && in.shore.y <= 0.0) return color;
 	color.rgb *= 1.0 + 0.15 * clamp(in.water.w, -1.0, 2.0);
-	if (in.water.z > 0.0) {
-		// foam: a cell per texture pixel (16 a block), each with a random value it rerolls about every 0.7 s (staggered, so the foam
-		// churns); the cell is foam where its value is under the foam level, with a paler fringe just above it
-		float T = g.GameTime * 1200.0;
-		float2 cell = floor(in.water.xy * 16.0);
-		float n = seaHash(cell + 37.0 * floor(T * 1.5 + seaHash(cell + 11.0)));
-		float level = min(in.water.z, 1.0);
-		if (n < level) return float4(SEA_FOAM, max(color.a, 0.95));
-		if (n < level + 0.12) return float4(mix(color.rgb, SEA_FOAM, 0.45), max(color.a, 0.85));
+	float T = g.GameTime * 1200.0;
+	float2 p = in.water.xy;
+	float level = in.water.z;
+	float2 drift = float2(0.0);
+	if (in.shore.y > 0.0 && in.shore.x < 3.99) {
+		float n;
+		float u = breakerPhase(p, T, n);
+		level += breakerFoam(in.shore.x, u, breakerSize(n), breakerSize(n - 1.0)) * min(in.shore.y * 2.0, 1.0);
+		// the foam rides the water: carried up to 1.5 blocks shoreward as the crest comes in and back out as it draws back (along the
+		// shore distance's slope over the face, from screen derivatives), a texel at a time
+		float2 px = dfdx(p), py = dfdy(p);
+		float dx = dfdx(in.shore.x), dy = dfdy(in.shore.x);
+		float det = px.x * py.y - px.y * py.x;
+		float2 grad = abs(det) > 1e-10 ? float2(dx * py.y - dy * px.y, px.x * dy - py.x * dx) / det : float2(0.0);
+		float gl = length(grad);
+		float carry = u < BREAK_CRASH ? 1.5 * u / BREAK_CRASH : 1.5 * (1.0 - smoothstep(0.0, 1.0, (u - BREAK_CRASH) / (1.0 - BREAK_CRASH)));
+		if (gl > 1e-3) drift = -grad / gl * floor(carry * 16.0) / 16.0;
+	}
+	if (level > 0.0) {
+		// foam: a cell per texture pixel (16 a block); patches from a clustered field, ragged and churning from each cell's own value
+		// (rerolled about every 0.7 s, staggered). A cell is foam where that's under the level, so thin foam is scattered lace and
+		// thick foam nearly solid, with a paler fringe just above it.
+		float2 cell = floor((p - drift) * 16.0);
+		float churn = seaHash(cell + 37.0 * floor(T * 1.5 + seaHash(cell + 11.0)));
+		float nz = 0.7 * seaCluster(cell, 3.0) + 0.3 * churn;
+		float l = min(level, 1.0) * 0.95;
+		if (nz < l) return float4(SEA_FOAM, max(color.a, 0.95));
+		if (nz < l + 0.08) return float4(mix(color.rgb, SEA_FOAM, 0.45), max(color.a, 0.85));
 	}
 	return color;
 }

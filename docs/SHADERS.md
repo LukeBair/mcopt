@@ -48,10 +48,13 @@ a block at a biome's edge instead of leaving a step. The amplitude is 3 steps ca
 up to 2.5x that in the shallows (shoaling, from the water's depth around the corner). Crests are lighter, troughs darker. Breakers:
 each corner is also tagged with its distance from the shore (0..4 blocks), and every ~7 s (the phase drifting along the coast, each
 wave a random 0.7..1.3 in size) a crest rolls in from 5 blocks out, growing as it comes and breaking into foam inside ~3 blocks;
-the shallows draw back just before it lands, then the water by the beach heaves up flush with the shore's top. Foam: a band along the
-shore (full at the waterline, gone 2.5 blocks out) that swells as each breaker lands and drains as it draws back, the breaking crest,
-and whitecaps on the tallest swell in rain and storms; drawn as plain white texel-sized cells (16 a block) covering about the share
-of the surface the foam level asks for, churning as each cell rerolls about every 0.7 s. (Until this fix own_fs never saw the water
+the shallows draw back just before it lands, then the water by the beach heaves up flush with the shore's top. Foam follows the same cycle, worked out per pixel in own_fs
+from the corner's shore distance (VOut.shore): the crest breaks into foam inside ~3.5 blocks with whitewater trailing behind it, a
+burst covers the first block or so as it lands, then the foam line slides back out to ~2.5 blocks as the water draws back, thinning
+and leaving lace shoreward of it, and fades on out as the next crest comes in; the waterline keeps a thin rim. The foam pattern rides
+the water (carried up to 1.5 blocks in and back out, a texel at a time). Plus whitecaps on the tallest swell in rain and storms. It is
+drawn as plain white texel cells (16 a block): patches from a clustered field, ragged and churning from each cell's own value, so
+thin foam is scattered lace and thick foam nearly solid. (Until this fix own_fs never saw the water
 varyings: mcown.m gives the fragment stage no TRANSLUCENT constant, so F_WATER now also follows the cutout-at-0.1 variant.) Swash (sheets of water running up the beach, ShadeWater.SHEETS) is switched off for now: the spill didn't read in game
 and is to be redone another way; terrain.metal still has the sheet code. Toggling it remeshes the world.
 `mcopt.shade.rays` (currently switched off in code, and the option hidden: the shafts weren't reading in game) ("Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
