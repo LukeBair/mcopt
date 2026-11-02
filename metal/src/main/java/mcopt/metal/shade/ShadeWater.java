@@ -13,9 +13,10 @@ import org.lwjgl.system.MemoryUtil;
 
 /**
  * Blocky ocean waves and shore foam. When a chunk is meshed, the water at the open sea's surface (sea level, open to the sky, in an
- * ocean or beach biome) is tagged in its vertex alpha: 255 - k, k 1 for open water, 2..5 for water touching 1..4 non-water blocks
- * (the shore, foam). terrain.metal's own_vs reads the tag, raises or lowers each tagged block's surface in 1/32-block steps (half a
- * texture pixel) by a wave field moving over the sea, and own_fs draws blocky foam on the shore blocks. Untagged water is vanilla's.
+ * ocean, beach or river biome) is tagged in its vertex alpha: 255 - k, k 1 for open water, 2..5 for water touching 1..4 non-water blocks
+ * (the shore, foam). terrain.metal's own_vs reads the tag and raises or lowers the surface at each block corner in 1/32-block steps
+ * (half a texture pixel) by a wave field moving over the sea (per corner, so neighbouring blocks always meet), and own_fs draws
+ * blocky foam on the shore blocks. Untagged water is vanilla's.
  * The tag costs at most 5/255 of the water's alpha if the waves are switched off before the chunk is meshed again.
  */
 public final class ShadeWater {
@@ -39,7 +40,8 @@ public final class ShadeWater {
 		if (!level.getFluidState(up).isEmpty() || !level.getBlockState(up).isAir()) return 0;
 		try {
 			var biome = cl.getBiome(pos);
-			if (!biome.is(BiomeTags.IS_OCEAN) && !biome.is(BiomeTags.IS_BEACH) && !biome.is(BiomeTags.IS_DEEP_OCEAN)) return 0;
+			// (rivers too: they meet the sea, and untagged water beside tagged leaves a seam)
+			if (!biome.is(BiomeTags.IS_OCEAN) && !biome.is(BiomeTags.IS_BEACH) && !biome.is(BiomeTags.IS_DEEP_OCEAN) && !biome.is(BiomeTags.IS_RIVER)) return 0;
 		} catch (RuntimeException e) {
 			return 0;
 		}

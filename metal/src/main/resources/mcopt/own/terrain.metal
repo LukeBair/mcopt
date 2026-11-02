@@ -1896,19 +1896,6 @@ vertex VOut own_vs(uint vid [[vertex_id]], uint iid [[instance_id]], constant Dr
 }
 
 // one arena vertex as vanilla's terrain.vsh shades it (own_vs, own_mesh); rel: its section-relative position
-// a translucent vertex's section-relative position only (ownVertex's decode, without the record path translucent never takes)
-static float3 ownTPos(uint vi, device const void *arenaRaw) {
-	if (COMPACT && F_TIGHT) {
-		uint4 w = ((device const uint4 *) arenaRaw)[vi];
-		return OWN_POS3(arenaRaw, ushort(w.x), ushort(w.x >> 16), ushort(w.y));
-	}
-	if (COMPACT) {
-		CVtx c = ((device const CVtx *) arenaRaw)[vi];
-		return OWN_POS3(arenaRaw, c.px, c.py, c.pz);
-	}
-	return float3(((device const Vtx *) arenaRaw)[vi].pos);
-}
-
 // mcopt shaders: the sea's wave field at a block, -1..1: three long swells crossing at angles, drifting with time (seconds)
 static float seaWave(int2 b, float T) {
 	float2 p = float2(b & 4095);
@@ -1942,12 +1929,11 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 	if (TRANSLUCENT && df.wave.x > 0.0) {
 		uint tag = 255u - uint(v.color.a);
 		if (tag >= 1u && tag <= 5u) {
-			// Tagged sea water (ShadeWater): its block from the quad's centre (this corner and the opposite one), the block's surface
-			// raised or lowered by the wave field in 1/32-block steps, so each block stays flat and the sea stays blocky.
+			// Tagged sea water (ShadeWater): the surface moved by the wave field at this corner, in 1/32-block steps. Neighbouring
+			// blocks share their corners, so the sea stays closed (a height per block left open seams between blocks).
 			v.color.a = 255;
-			float3 c = (float3(v.pos) + ownTPos(vi ^ 2u, arenaRaw)) * 0.5;
-			int3 blk = origin + int3(floor(c));
-			float h = seaWave(blk.xz, g.GameTime * 1200.0);
+			int2 corner = origin.xz + int2(round(float2(v.pos.xz)));
+			float h = seaWave(corner, g.GameTime * 1200.0);
 			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(h * df.wave.x * 32.0) / 32.0 : 0.0;
 			float4 wat = float4(float2(origin.xz & 1023) + float2(v.pos.xz), float(tag - 1u) * 0.25 * df.wave.y, h);
 			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff, wat);
@@ -2362,7 +2348,7 @@ static float seaHash(float2 p) {
 	return fract((p3.x + p3.y) * p3.z);
 }
 
-// mcopt shaders: tagged sea water's look. Crests a touch lighter and troughs darker (flat per block, as the waves are), and on shore
+// mcopt shaders: tagged sea water's look. Crests a touch lighter and troughs darker, and on shore
 // blocks blocky foam: texel-sized cells (16 a block) of drifting value noise, thicker the more land the block touches and in rough
 // weather, lit as the water is.
 static float4 seaSurface(float4 color, VOut in, constant Globals &g) {

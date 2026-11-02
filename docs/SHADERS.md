@@ -41,11 +41,11 @@ and its tint in the sky toward the horizon.
 frames, each with a hue (torch warm, soul fire and sea lanterns cool, redstone red, amethyst violet, else the block's map colour), and
 the composite shifts the colour of what they light toward it, where the sun isn't the main light. No occlusion: it's a tint.
 `mcopt.shade.waves` (default true, "Ocean waves"): open-sea water (source water at sea level, open to the sky, in an ocean or beach
-biome) is tagged when meshed (ShadeWater, in the vertex alpha: 255 - k), and terrain.metal raises or lowers each tagged block's surface
-in 1/32-block steps (half a texture pixel) by a field of crossing swells, so the sea stays blocky; crests are a touch lighter. The
+or river biome) is tagged when meshed (ShadeWater, in the vertex alpha: 255 - k), and terrain.metal raises or lowers the surface at
+each block corner in 1/32-block steps (half a texture pixel) by a field of crossing swells; per corner, so neighbouring blocks share
+their edges and the sea has no seams (a flat height per block left gaps). Crests are a touch lighter. The
 amplitude is 2 steps calm, 4 in rain, 7 in a thunderstorm (DrawFrame.wave). Shore blocks (touching non-water) get blocky foam: drifting
-texel-sized noise, thicker the more land they touch and in rough weather. Neighbouring blocks at different heights leave a hairline
-gap at grazing angles. Toggling it applies to chunks as they are meshed again.
+texel-sized noise, thicker the more land they touch and in rough weather. Toggling it applies to chunks as they are meshed again.
 `mcopt.shade.rays` (default true, "Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
 camera from the heightmaps (open to the sky to the ground, roofed by leaves 3 blocks away on most sides), keeps the 12 nearest
 (4 blocks apart) and the composite adds a soft warm glow along a shaft from each gap down to the ground along the sunlight,
