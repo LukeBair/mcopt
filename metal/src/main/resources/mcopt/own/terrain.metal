@@ -2414,6 +2414,9 @@ static float linear_fog_value(float vertexDistance, float fogStart, float fogEnd
 constant bool CUTOUT [[function_constant(0)]];
 constant float CUTOUT_LIMIT [[function_constant(5)]];  // vanilla's ALPHA_CUTOUT: 0.5 cutout, 0.1 translucent
 
+// mcopt shaders: foam's colour: plain white, unlit, so it reads at any time of day
+#define SEA_FOAM float3(0.97, 0.98, 1.0)
+
 // mcopt shaders: a value-noise hash for the foam
 static float seaHash(float2 p) {
 	float3 p3 = fract(float3(p.xyx) * 0.1031);
@@ -2423,7 +2426,7 @@ static float seaHash(float2 p) {
 
 // mcopt shaders: tagged sea water's look. Crests a touch lighter and troughs darker, and blocky foam where the vertex stage asks for
 // it (shore blocks, breaking crests in the shallows): texel-sized cells (16 a block) of drifting value noise, thicker the higher the
-// foam level, lit as the water is.
+// foam level, plain white (SEA_FOAM).
 // A swash sheet (water.z -1 - its distance up the beach, blocks; water.w a full run-up there): the breaker's water out to how far it
 // has run (breakerReach), in 1/32-block steps judged at each texel's centre so its edge is blocky, with a ragged line of foam along
 // the edge (thick as it surges in, broken as it draws back) and scraps of foam riding with it; behind the receding water the sand
@@ -2453,9 +2456,7 @@ static float4 swashSheet(float4 color, VOut in, constant Globals &g) {
 		if (dc > wetTo || wet < 0.02) discard_fragment();
 		return float4(0.0, 0.0, 0.0, wet);
 	}
-	float3 tint = getColor(in).rgb;
-	float lit = max(tint.r, max(tint.g, tint.b));
-	float4 white = float4(float3(0.9, 0.95, 1.0) * lit, 0.92);
+	float4 white = float4(SEA_FOAM, 0.95);
 	bool surging = u < BREAK_CRASH + (1.0 - BREAK_CRASH) * 0.22;
 	float band = surging ? 0.3 : 0.1 + 0.15 * r;
 	if (reach - dc < band && (surging || seaHash(cell + 17.0) > 0.35)) return white;
@@ -2483,9 +2484,7 @@ static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
 		float n = mix(mix(seaHash(i), seaHash(i + float2(1, 0)), f.x), mix(seaHash(i + float2(0, 1)), seaHash(i + float2(1, 1)), f.x), f.y);
 		n = n * 0.75 + 0.25 * seaHash(cell + floor(T * 1.5));
 		if (n > 0.92 - 0.8 * min(in.water.z, 1.0)) {
-			float3 tint = getColor(in).rgb;
-			float lit = max(tint.r, max(tint.g, tint.b));
-			color = float4(float3(0.9, 0.95, 1.0) * lit, max(color.a, 0.9));
+			color = float4(SEA_FOAM, max(color.a, 0.95));
 		}
 	}
 	return color;
