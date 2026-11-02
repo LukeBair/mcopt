@@ -68,8 +68,11 @@ public final class ShadeScreen extends OptionsSubScreen {
 				v -> Tooltip.create(Component.literal("Shafts of sunlight through gaps in the canopy, in the morning and late afternoon.")),
 				Shade.RAYS, v -> Shade.RAYS = v),
 			OptionInstance.createBoolean("Ocean waves",
-				v -> Tooltip.create(Component.literal("Blocky waves on the open sea, bigger in rain and storms, with foam along the shore.")),
-				Shade.WAVES, v -> Shade.WAVES = v),
+				v -> Tooltip.create(Component.literal("Blocky waves on the open sea, bigger in rain and storms, breaking in the shallows and running up the beach.")),
+				Shade.WAVES, v -> {
+					Shade.WAVES = v;
+					Minecraft.getInstance().levelExtractor.allChanged();  // (the water's tags and swash sheets are made when it's meshed)
+				}),
 			slider("Cloud distance", "How far the stylized clouds reach, in blocks.", 128, 1536, Shade.CLOUD_DIST, Shade::blocks, v -> Shade.CLOUD_DIST = (float) v),
 			OptionInstance.createBoolean("Wide soft shadows",
 				v -> Tooltip.create(Component.literal("Wide, filtered shadow edges (a little grainy). Off: solid shadows with a slightly soft edge, and faster.")),

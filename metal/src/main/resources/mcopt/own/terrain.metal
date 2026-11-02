@@ -89,7 +89,7 @@ struct DrawFrame {
 	int fadeMs;
 	int clipOnCpu;        // 1: clip below is ProjMat * ModelViewMat, multiplied once on the CPU (-Dmcopt.own.cpuClip)
 	float4x4 clip;
-	float4 wave;          // mcopt shaders (ShadeWater): x wave amplitude (blocks, 0: off), y foam strength
+	float4 wave;          // mcopt shaders (ShadeWater): x wave amplitude (blocks, 0: flat), y foam strength, z tags present (1/0)
 };
 
 // vanilla's std140 uniform blocks
@@ -1612,7 +1612,7 @@ constant bool F_WATER = TRANSLUCENT && F_VARY;
 
 struct VOut {
 	float4 pos [[position]];
-	float4 water [[function_constant(F_WATER)]];  // world xz (mod 1024), foam level, wave height -1..1 (0: untagged water)
+	float4 water [[function_constant(F_WATER)]];  // world xz (mod 1024), foam level (swash: -1 - distance up the beach), wave height -1..1 (swash: reach; 0: untagged)
 	float sphericalVertexDistance [[function_constant(F_VARY)]];
 	float cylindricalVertexDistance [[function_constant(F_RICH)]];
 	float4 vertexColor [[function_constant(F_FLOATCOLOR)]];
@@ -1926,17 +1926,37 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 	} else {
 		v = ((device const Vtx *) arenaRaw)[vi];
 	}
-	if (TRANSLUCENT && df.wave.x > 0.0) {
+	if (TRANSLUCENT && df.wave.z > 0.0) {
 		uint tag = 255u - uint(v.color.a);
-		if (tag >= 1u && tag <= 5u) {
-			// Tagged sea water (ShadeWater): the surface moved by the wave field at this corner, in 1/32-block steps. Neighbouring
-			// blocks share their corners, so the sea stays closed (a height per block left open seams between blocks).
+		if (tag >= 1u && tag <= 125u) {
+			// ShadeWater's tags: 1..100 sea water, 101..125 a swash sheet over the beach
 			v.color.a = 255;
+			bool swash = tag >= 101u;
+			if (df.wave.x <= 0.0) {
+				// (waves flat: the sea as vanilla's, no sheets)
+				VOut o = ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel);
+				if (swash) o.pos = float4(0.0, 0.0, -2.0, 1.0);
+				return o;
+			}
 			int2 corner = origin.xz + int2(round(float2(v.pos.xz)));
 			float h = seaWave(corner, g.GameTime * 1200.0);
-			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(h * df.wave.x * 32.0) / 32.0 : 0.0;
-			float4 wat = float4(float2(origin.xz & 1023) + float2(v.pos.xz), float(tag - 1u) * 0.25 * df.wave.y, h);
-			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff, wat);
+			float2 xz = float2(origin.xz & 1023) + float2(v.pos.xz);
+			if (swash) {
+				// how far up the beach this corner's wave runs now (blocks): the swell past a threshold, longer in rough weather
+				uint low = tag - 101u;
+				float q = float(low / 5u) * 0.25;
+				float reach = max(h - 0.1, 0.0) / 0.9 * df.wave.x * 32.0 * 0.45 * q;
+				return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, 0.0, float4(xz, -1.0 - float(low % 5u), reach));
+			}
+			// Sea water: the surface moved by the wave field at this corner in 1/32-block steps, scaled by the corner's ocean share and
+			// taller where it's shallow. Neighbouring blocks share their corners, so the sea stays closed.
+			uint low = tag - 1u;
+			float k = float(low % 5u), sh = float(low / 5u % 4u), q = float(low / 20u) * 0.25;
+			float amp = df.wave.x * q * (1.0 + 0.5 * sh);
+			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(h * amp * 32.0) / 32.0 : 0.0;
+			// foam: on shore blocks, surging as each crest arrives; in the shallows, where the crests break
+			float foam = k * 0.25 * df.wave.y * (0.55 + 0.9 * smoothstep(-0.3, 0.6, h)) + sh / 3.0 * smoothstep(0.35, 0.8, h) * df.wave.y * 0.7;
+			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff, float4(xz, foam * q, h * q));
 		}
 	}
 	return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel);
@@ -2348,10 +2368,31 @@ static float seaHash(float2 p) {
 	return fract((p3.x + p3.y) * p3.z);
 }
 
-// mcopt shaders: tagged sea water's look. Crests a touch lighter and troughs darker, and on shore
-// blocks blocky foam: texel-sized cells (16 a block) of drifting value noise, thicker the more land the block touches and in rough
-// weather, lit as the water is.
+// mcopt shaders: tagged sea water's look. Crests a touch lighter and troughs darker, and blocky foam where the vertex stage asks for
+// it (shore blocks, breaking crests in the shallows): texel-sized cells (16 a block) of drifting value noise, thicker the higher the
+// foam level, lit as the water is.
+// A swash sheet (water.z -1 - its distance up the beach, blocks; water.w the run-up's reach): shown out to the reach in 1/32-block
+// steps, judged at each texel's centre so its edge is blocky, with a ragged line of foam along the edge; past it, nothing.
+static float4 swashSheet(float4 color, VOut in) {
+	float2 p = in.water.xy;
+	float dist = -in.water.z - 1.0;
+	// the distance at this texel's centre, from the field's gradient over the face (screen derivatives)
+	float2 px = dfdx(p), py = dfdy(p);
+	float dx = dfdx(dist), dy = dfdy(dist);
+	float det = px.x * py.y - px.y * py.x;
+	float2 grad = abs(det) > 1e-10 ? float2(dx * py.y - dy * px.y, px.x * dy - py.x * dx) / det : float2(0.0);
+	float2 cell = floor(p * 16.0);
+	float dc = dist + dot(grad, (cell + 0.5) / 16.0 - p);
+	float reach = floor(in.water.w * 32.0) / 32.0 + (seaHash(cell) - 0.5) * 0.12;
+	if (in.water.w <= 0.0 || dc > reach) discard_fragment();
+	float3 tint = getColor(in).rgb;
+	float lit = max(tint.r, max(tint.g, tint.b));
+	if (reach - dc < 0.15) return float4(float3(0.9, 0.95, 1.0) * lit, 0.9);
+	return float4(color.rgb * 1.08, color.a * 0.75);
+}
+
 static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
+	if (in.water.z < -0.5) return swashSheet(color, in);
 	if (in.water.z <= 0.0 && in.water.w == 0.0) return color;
 	color.rgb *= 1.0 + 0.1 * in.water.w;
 	if (in.water.z > 0.0) {

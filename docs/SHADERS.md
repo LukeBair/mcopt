@@ -40,12 +40,17 @@ and its tint in the sky toward the horizon.
 `mcopt.shade.blockLight` (default 0.6, "Light colours"): ShadeLights finds the 32 light-emitting blocks nearest the camera every 20
 frames, each with a hue (torch warm, soul fire and sea lanterns cool, redstone red, amethyst violet, else the block's map colour), and
 the composite shifts the colour of what they light toward it, where the sun isn't the main light. No occlusion: it's a tint.
-`mcopt.shade.waves` (default true, "Ocean waves"): open-sea water (source water at sea level, open to the sky, in an ocean or beach
-or river biome) is tagged when meshed (ShadeWater, in the vertex alpha: 255 - k), and terrain.metal raises or lowers the surface at
-each block corner in 1/32-block steps (half a texture pixel) by a field of crossing swells; per corner, so neighbouring blocks share
-their edges and the sea has no seams (a flat height per block left gaps). Crests are a touch lighter. The
-amplitude is 2 steps calm, 4 in rain, 7 in a thunderstorm (DrawFrame.wave). Shore blocks (touching non-water) get blocky foam: drifting
-texel-sized noise, thicker the more land they touch and in rough weather. Toggling it applies to chunks as they are meshed again.
+`mcopt.shade.waves` (default true, "Ocean waves"): sea-surface water (source water at sea level, open to the sky) within a block of
+an ocean or beach biome is tagged per vertex when meshed (ShadeWater, in the vertex alpha), and terrain.metal raises or lowers the
+surface at each block corner in 1/32-block steps (half a texture pixel) by a field of crossing swells. Per corner, so neighbouring
+blocks share their edges; the amplitude is scaled by how many of the corner's 4 columns are ocean or beach, so the waves fade out over
+a block at a biome's edge instead of leaving a step. The amplitude is 2 steps calm, 4 in rain, 7 in a thunderstorm (DrawFrame.wave),
+up to 2.5x that in the shallows (shoaling, from the water's depth around the corner). Crests are a touch lighter. Foam is blocky
+texel-sized drifting noise: on shore blocks (touching non-water), surging as each crest arrives, and in the shallows where the crests
+break. Swash: beach blocks (a sturdy top at sea level, air above) within 3 blocks of the sea get a sheet of the nearest sea water's
+top face half a texture pixel over them, shown only out to how far the wave at that spot runs up the beach (in 1/32-block steps,
+judged per texel so the edge is blocky), with foam along its edge; so the sea washes up over the shore block and a few blocks inland,
+farther in storms. Only blocks at sea level get sheets (not the step up behind them). Toggling it remeshes the world.
 `mcopt.shade.rays` (default true, "Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
 camera from the heightmaps (open to the sky to the ground, roofed by leaves 3 blocks away on most sides), keeps the 12 nearest
 (4 blocks apart) and the composite adds a soft warm glow along a shaft from each gap down to the ground along the sunlight,

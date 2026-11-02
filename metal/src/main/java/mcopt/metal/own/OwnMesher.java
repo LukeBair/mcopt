@@ -186,9 +186,12 @@ public final class OwnMesher {
 					FluidState fluidState = blockState.getFluidState();
 					if (!fluidState.isEmpty()) {
 						// mcopt shaders: open-sea water is tagged for blocky waves and shore foam (ShadeWater)
-						int waterTag = waves ? mcopt.metal.shade.ShadeWater.tag(level, pos, fluidState) : 0;
-						fluidRenderer.tesselate(level, pos, waterTag == 0 ? fluidOutput : l -> mcopt.metal.shade.ShadeWater.tagged(fluidOutput.getBuilder(l), waterTag),
+						mcopt.metal.shade.ShadeWater.Sea sea = waves ? mcopt.metal.shade.ShadeWater.sea(level, pos, fluidState) : null;
+						fluidRenderer.tesselate(level, pos, sea == null ? fluidOutput : l -> mcopt.metal.shade.ShadeWater.tagged(fluidOutput.getBuilder(l), sea),
 							blockState, fluidState);
+					} else if (waves) {
+						// mcopt shaders: beach blocks by the sea get a swash sheet (ShadeWater)
+						mcopt.metal.shade.ShadeWater.swash(level, pos, blockState, fluidRenderer, fluidOutput);
 					}
 					if (blockState.getRenderShape() == RenderShape.MODEL && api != null) {
 						// vanilla's region, not OwnRegion: Fabric API extends RenderSectionRegion (block entity render data, biomes) for FRAPI models
