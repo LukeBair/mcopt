@@ -38,7 +38,7 @@ import org.lwjgl.system.MemoryStack;
 public final class ShadePass {
 	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4()
 		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().get();
-	private static final int LIGHTS_SIZE = ShadeLights.MAX * 2 * 16;
+	private static final int LIGHTS_SIZE = (ShadeLights.MAX * 2 + ShadeRays.MAX * 2) * 16;
 	private static RenderPipeline occ;
 	private static RenderPipeline shade;
 	private static RenderPipeline blit;
@@ -109,6 +109,15 @@ public final class ShadePass {
 		}
 	}
 
+	/** This frame's level projection as renderLevel set it (with the view bob), and whether it was captured since the last pass. */
+	private static final Matrix4f LEVEL_PROJ = new Matrix4f();
+	private static boolean LEVEL_PROJ_SET;
+
+	public static void levelProjection(Matrix4f m) {
+		LEVEL_PROJ.set(m);
+		LEVEL_PROJ_SET = true;
+	}
+
 	/** Chance that a sunrise or sunset is a vivid one. */
 	private static final double VIVID_CHANCE = 0.035;
 	/** Every sunrise and sunset vivid, for testing. */
@@ -149,9 +158,11 @@ public final class ShadePass {
 	}
 
 	private static void apply(RenderTarget main, GraphicsResourceAllocator pool, LevelRenderState level, CameraRenderState camera, SkyRenderState sky, float rain) {
-		Matrix4f proj = new Matrix4f(camera.projectionMatrix);
+		// The projection the level was drawn with (view bobbing and nausea included, ShadeLevelProjectionMixin): the camera's own
+		// leaves out the bob, and reconstructing with it put clouds and shadows off by the bob, swaying and trailing as you walk.
+		Matrix4f proj = new Matrix4f(LEVEL_PROJ_SET ? LEVEL_PROJ : camera.projectionMatrix);
+		LEVEL_PROJ_SET = false;
 		Matrix4f inv = proj.invert(new Matrix4f());
-		proj.set(camera.projectionMatrix);
 		// Direction to the sun in world space (SkyRenderer: Y -90, X sunAngle on +Y), then into view space.
 		Vector3f sun = new Vector3f((float) -Math.sin(sky.sunAngle), (float) Math.cos(sky.sunAngle), 0f);
 		if (Shade.SHOT > 0 && !logged && ++logFrames > 300) { logged = true; System.out.println("[mcopt] shade: sunAngle " + sky.sunAngle + " rain " + rain); }
@@ -187,7 +198,9 @@ public final class ShadePass {
 		float ox = cells > 0 ? (float) floorMod(camera.pos.x - drift, period) : 0f, oz = cells > 0 ? (float) floorMod(camera.pos.z, period) : 0f;
 		int cc = level.cloudColor;
 		ShadeLights.update(camera.pos);
-		writeLights(camera);
+		ShadeRays.update(camera.pos);
+		float rays = sunny ? ShadeRays.strength(elev, rain) : 0f;
+		writeLights(camera, sky.sunAngle);
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			ByteBuffer data = Std140Builder.onStack(stack, UBO_SIZE)
 				.putMat4f(proj).putMat4f(inv)
@@ -205,7 +218,7 @@ public final class ShadePass {
 				.putVec4((cc >> 16 & 255) / 255f, (cc >> 8 & 255) / 255f, (cc & 255) / 255f, (cc >>> 24) / 255f)
 				.putVec4(ShadeLights.count, Shade.BLOCK_LIGHT, camera.fogType == FogType.WATER ? 1f : 0f, Math.max(day, 0.15f))
 				.putMat4f(shadowM2)
-				.putVec4(rain0, vivid, 0f, 0f)
+				.putVec4(rain0, vivid, rays > 0f ? ShadeRays.count : 0f, rays)
 				.putVec4(vp[0], vp[1], vp[2], 0f)
 				.putVec4(vp[3], vp[4], vp[5], 0f)
 				.putVec4(vp[6], vp[7], vp[8], 0f)
@@ -256,7 +269,7 @@ public final class ShadePass {
 	}
 
 	/** The nearest emitters into the lights buffer, moved into view space (camera-relative, rotated) so the shader can use them as is. */
-	private static void writeLights(CameraRenderState camera) {
+	private static void writeLights(CameraRenderState camera, float sunAngle) {
 		Vector3f v = new Vector3f();
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			Std140Builder b = Std140Builder.onStack(stack, LIGHTS_SIZE);
@@ -271,6 +284,25 @@ public final class ShadePass {
 				}
 			}
 			for (int i = 0; i < ShadeLights.MAX; i++) b.putVec4(c[i * 4], c[i * 4 + 1], c[i * 4 + 2], 0f);
+			// God ray shafts (ShadeRays): from the canopy gap down to the ground along the sunlight, ends in view space; w the width
+			// and a per-shaft brightness.
+			float sx = (float) -Math.sin(sunAngle), sy = Math.max(0.05f, (float) Math.cos(sunAngle));
+			float[] g = ShadeRays.GAPS;
+			Vector3f e = new Vector3f();
+			for (int i = 0; i < ShadeRays.MAX * 2; i++) {
+				int n = i % ShadeRays.MAX;
+				if (n >= ShadeRays.count) {
+					b.putVec4(0f, 0f, 0f, 0f);
+					continue;
+				}
+				float top = g[n * 4 + 2], ground = g[n * 4 + 3];
+				float drop = i < ShadeRays.MAX ? 0f : top - ground;
+				float wx = g[n * 4] - sx / sy * drop, wy = top - drop, wz = g[n * 4 + 1];
+				e.set((float) (wx - camera.pos.x), (float) (wy - camera.pos.y), (float) (wz - camera.pos.z));
+				camera.viewRotationMatrix.transformDirection(e);
+				int h = Float.floatToIntBits(g[n * 4] * 31f + g[n * 4 + 1]) * 0x9E3779B1;
+				b.putVec4(e.x, e.y, e.z, i < ShadeRays.MAX ? 0.9f + ((h >>> 24) / 255f) * 0.8f : 0.55f + ((h >>> 16 & 255) / 255f) * 0.45f);
+			}
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(lights.slice(), b.get());
 		}
 	}

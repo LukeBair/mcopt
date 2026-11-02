@@ -28,7 +28,7 @@ layout(std140) uniform ShadeInfo {
     vec4 CloudCol; // vanilla's cloud colour for the time and weather (rgb, a)
     vec4 LightP;   // x coloured lights in ShadeLights, y their strength, z camera under water (1), w daylight under water 0..1
     mat4 ShadowM2; // view space -> the second shadow map (the sun angle step above ShadowM's); Opts.y blends toward it
-    vec4 CloudX;   // x rain 0..1, y vivid sunrise/sunset (1, rare)
+    vec4 CloudX;   // x rain 0..1, y vivid sunrise/sunset (1, rare), z god ray shafts, w their strength
     vec4 VividL;   // vivid palette: sunlight on the clouds
     vec4 VividS;   // vivid palette: shaded undersides
     vec4 VividK;   // vivid palette: sky tint toward the horizon
@@ -38,6 +38,8 @@ layout(std140) uniform ShadeInfo {
 layout(std140) uniform ShadeLights {
     vec4 LightPos[32];
     vec4 LightCol[32];
+    vec4 RayA[12];   // god ray shafts (ShadeRays): top end (canopy gap), view space; w width (blocks)
+    vec4 RayB[12];   // bottom end (ground); w brightness
 };
 
 layout(location = 0) in vec2 texCoord;
@@ -165,6 +167,29 @@ vec3 cloudShade(vec3 h, vec3 d, vec3 sunW, bool side, int axis, vec2 stepv, floa
     vec3 col = CloudCol.rgb * (amb * mix(vec3(1.0), mix(vec3(1.0, 0.8, 0.78), VividS.rgb, viv), low * 0.6) * mix(1.0, mix(0.45, 0.75, hf), wet) + light + sunC * behind);
     // A little haze toward the sky with distance, so far clouds sit in the air rather than on it.
     return mix(col, sky, smoothstep(0.0, CloudP.z, tin) * 0.35);
+}
+
+// Forest god rays: the glow along the view ray (from the eye, up to the scene at tMax) from each shaft, by how close the ray passes
+// to the shaft's axis (closest points between the two segments), faded toward the shaft's ends.
+float godRays(vec3 dir, float tMax) {
+    int count = int(CloudX.z + 0.5);
+    float sum = 0.0;
+    for (int i = 0; i < 12; i++) {
+        if (i >= count) break;
+        vec3 a = RayA[i].xyz, ab = RayB[i].xyz - a;
+        float ee = dot(ab, ab), f = dot(ab, dir), c = dot(dir, -a), bb = dot(ab, -a);
+        float den = ee - f * f;
+        float s = den > 1e-4 ? clamp((f * c - bb) / den, 0.0, 1.0) : 0.0;
+        float t = clamp(f * s + c, 0.0, tMax);
+        s = clamp((f * t - bb) / max(ee, 1e-4), 0.0, 1.0);
+        float d = length(dir * t - (a + ab * s));
+        float w = RayA[i].w;
+        float ends = smoothstep(0.0, 0.12, s) * (1.0 - smoothstep(0.75, 1.0, s));
+        // Shafts right in front of the camera are thinned out, so walking through one doesn't wash out the view.
+        float near = smoothstep(1.0, 4.0, t);
+        sum += (1.0 - smoothstep(0.15 * w, w, d)) * ends * near * RayB[i].w;
+    }
+    return sum;
 }
 
 // Stylized clouds: the cloud map as blocky columns, marched cell by cell (12 blocks) along the view ray. Each cloud cell's column
@@ -319,6 +344,16 @@ void main() {
         if (d0 > 0.0) tLimit = min(tLimit, length(viewPosAt(texCoord, d0)));
         vec4 cl = clouds(normalize(dirV), tLimit, src.rgb);
         col = mix(col, cl.rgb, cl.a);
+    }
+
+    // Forest god rays: warm sunlight added along the shafts, in front of whatever is behind them.
+    if (CloudX.z > 0.5 && CloudX.w > 0.0 && !hand && LightP.z < 0.5) {
+        vec3 dirV = normalize(viewPosAt(texCoord, 0.5));
+        float tMax = d0 > 0.0 ? length(viewPosAt(texCoord, d0)) : 1e4;
+        float g = godRays(dirV, tMax);
+        // Brighter looking toward the sun (light scattered forward), and in the sun's colour.
+        float fwd = mix(0.45, 1.0, pow(max(dot(dirV, normalize(Sun.xyz)), 0.0), 3.0));
+        col += Tint.rgb * vec3(1.0, 0.93, 0.78) * min(g, 1.5) * 0.22 * CloudX.w * fwd;
     }
 
     // A vivid sunrise or sunset: the sky toward the horizon goes richer (saturation up, warmer), strongest near the sun.

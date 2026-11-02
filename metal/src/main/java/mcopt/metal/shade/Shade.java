@@ -36,6 +36,8 @@ public final class Shade {
 	static boolean CLOUDS = Boolean.parseBoolean(System.getProperty("mcopt.shade.clouds", "true"));
 	/** Blocky ocean waves and shore foam (ShadeWater; whether water is tagged for them is decided when it's meshed). */
 	public static boolean WAVES = Boolean.parseBoolean(System.getProperty("mcopt.shade.waves", "true"));
+	/** God rays through canopy gaps in forests (ShadeRays). */
+	static boolean RAYS = Boolean.parseBoolean(System.getProperty("mcopt.shade.rays", "true"));
 	/** How far the stylized clouds reach, blocks. */
 	static float CLOUD_DIST = f("mcopt.shade.cloudDist", 640f);
 	/** Coloured block light strength 0..1 (ShadeLights). */
@@ -150,6 +152,7 @@ public final class Shade {
 		SOFT = false;
 		CLOUDS = true;
 		WAVES = true;
+		RAYS = true;
 		CLOUD_DIST = 640f;
 		BLOCK_LIGHT = 0.6f;
 		debugNow = 0;

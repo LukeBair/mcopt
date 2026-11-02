@@ -46,6 +46,12 @@ in 1/32-block steps (half a texture pixel) by a field of crossing swells, so the
 amplitude is 2 steps calm, 4 in rain, 7 in a thunderstorm (DrawFrame.wave). Shore blocks (touching non-water) get blocky foam: drifting
 texel-sized noise, thicker the more land they touch and in rough weather. Neighbouring blocks at different heights leave a hairline
 gap at grazing angles. Toggling it applies to chunks as they are meshed again.
+`mcopt.shade.rays` (default true, "Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
+camera from the heightmaps (open to the sky to the ground, roofed by leaves 3 blocks away on most sides), keeps the 12 nearest
+(4 blocks apart) and the composite adds a soft warm glow along a shaft from each gap down to the ground along the sunlight,
+brighter toward the sun. Only while the sun is low but up (morning, late afternoon), not in rain.
+The composite reconstructs positions with the projection renderLevel actually drew with (ShadeLevelProjectionMixin: view bobbing
+and nausea included); the camera's own projection leaves the bob out, which made clouds and shadows sway and trail as you walked.
 `mcopt.renderScale` (default 1, "Render scale", 50..100%): the level renders into targets that fraction of the window's size
 (ShadeRenderScaleMixin swaps GameRenderer's main and hand targets around renderLevel..applyPostEffects, so the shade pass runs scaled
 too) and is stretched bilinearly onto the window's target before the GUI, which stays sharp.
