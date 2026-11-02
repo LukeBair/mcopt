@@ -61,10 +61,17 @@ varyings: mcown.m gives the fragment stage no TRANSLUCENT constant, so F_WATER n
 and is to be redone another way; terrain.metal still has the sheet code. Toggling it remeshes the world. Each crash also throws up
 splash, spray and popping bubbles along the shore (ShadeSplash, ticked with ClientLevel.animateTick: it finds sea water touching
 the beach within 32 blocks every 2 s and fires when its breakerPhase, worked out the same way from the same clock, crosses the
-crash; more in storms and for bigger waves). Tall waterfalls (a falling column of 10 blocks or more): ShadeWater tags the column
-(200 + height above the pool) and the surface water within 3 blocks of where it lands (130 + its corner's offset from the column);
-own_fs streaks foam down the column, nearly solid over the last couple of blocks, and churns the pool white where it lands with
-rings of foam pushed outward, the pool's surface heaving in 1/32 steps; ShadeSplash adds a constant splash, mist and bubbles there.
+crash; more in storms and for bigger waves). Waterfalls (a falling column of 5 blocks or more): ShadeWater
+tags each falling block with its height above where it lands (200 + h, alpha) and how far the water has fallen to it from the
+column's top (0..7 in green's low 3 bits, full at 12 blocks), each worked out from the block's own neighbourhood so the tags agree
+across section edges; own_fs streaks foam down the column, more and whiter the farther it has fallen and thickest over the last
+blocks. Surface water within 7 blocks of where it lands is tagged with its corner's offset from the column (alpha 130.. for a
+pool, 150.. for water spreading over the ground, the rest in red's and blue's low 2 bits) and the column's intensity (green, from
+its height, full at 16): a pool churns white where it lands, wider and stronger for a taller fall, with rings of foam pushed
+outward and the surface heaving in 1/32 steps; water spreading over the ground runs white all the way to its edge. ShadeSplash adds
+a constant splash, mist and bubbles there, more for a taller fall. Rain: all other open water's surface is tagged (230), and in the
+rain own_fs rings tagged water's top faces with blocky raindrop ripples where the sky light reaches it (VOut.light.w), more the
+harder it rains; it costs only the water's own fragments, no particles. Foam is a muted grey-blue white, lit as the water is.
 `mcopt.shade.rays` (currently switched off in code, and the option hidden: the shafts weren't reading in game) ("Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
 camera from the heightmaps (open to the sky to the ground, roofed by leaves 3 blocks away on most sides), keeps the 12 nearest
 (4 blocks apart) and the composite adds a soft warm glow along a shaft from each gap down to the ground along the sunlight,

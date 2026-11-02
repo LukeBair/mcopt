@@ -14,7 +14,7 @@ import net.minecraft.world.level.material.FluidState;
 /**
  * Splashes where the water churns (ShadeWater): spray and droplets thrown up along the shore as each breaker crashes, in step with the
  * shader's (the same breakerPhase, from the same clock), and a constant splash and mist at the foot of every tall waterfall (FALL
- * blocks or more). The sites near the player are found every 2 seconds (or after moving 8 blocks); particles are spawned each tick.
+ * blocks or more, growing with the fall). The sites near the player are found every 2 seconds (or after moving 8 blocks); particles are spawned each tick.
  */
 public final class ShadeSplash {
 	/** How far from the player sites are found, blocks (horizontally; waterfalls also within this vertically). */
@@ -24,7 +24,7 @@ public final class ShadeSplash {
 	private static final double W = Math.PI * 2 / 1024;
 	/** Shore sites: sea water touching the beach (x, z, and the direction to the land ×100: dx, dz). */
 	private static final List<int[]> shore = new ArrayList<>();
-	/** Waterfall feet: x, the surface's block y, z. */
+	/** Waterfall feet: x, the surface's block y, z, intensity 0..7 (ShadeWater.power). */
 	private static final List<int[]> falls = new ArrayList<>();
 	private static int scanX = Integer.MIN_VALUE, scanZ, sinceScan;
 	private static ClientLevel scanLevel;
@@ -67,13 +67,15 @@ public final class ShadeSplash {
 			if (r.nextFloat() < 0.5f) level.addParticle(ParticleTypes.BUBBLE_POP, cx + r.nextGaussian() * 0.4, top, cz + r.nextGaussian() * 0.4, 0, 0, 0);
 		}
 		for (int[] f : falls) {
-			double cx = f[0] + 0.5, top = f[1] + 0.95, cz = f[2] + 0.5;
-			for (int i = 0; i < 3; i++) {
+			// (more and higher the farther it falls: f[3], 0..7)
+			double cx = f[0] + 0.5, top = f[1] + 0.95, cz = f[2] + 0.5, p = f[3] / 7.0;
+			int drops = 1 + (int) Math.round(3 * p);
+			for (int i = 0; i < drops; i++) {
 				double a = r.nextDouble() * Math.PI * 2, out = 0.05 + r.nextDouble() * 0.1;
 				level.addParticle(ParticleTypes.SPLASH, cx + Math.cos(a) * 0.5, top, cz + Math.sin(a) * 0.5,
-					Math.cos(a) * out, 0.25 + r.nextDouble() * 0.2, Math.sin(a) * out);
+					Math.cos(a) * out, 0.15 + 0.15 * p + r.nextDouble() * 0.2, Math.sin(a) * out);
 			}
-			if (r.nextFloat() < 0.5f) {
+			if (r.nextFloat() < 0.15f + 0.45f * p) {
 				level.addParticle(ParticleTypes.CLOUD, cx + r.nextGaussian() * 0.6, top + 0.2 + r.nextDouble() * 0.5, cz + r.nextGaussian() * 0.6,
 					r.nextGaussian() * 0.02, 0.03 + r.nextDouble() * 0.04, r.nextGaussian() * 0.02);
 			}
@@ -149,8 +151,9 @@ public final class ShadeSplash {
 								if (!ShadeWater.falling(section.getBlockState(lx, ly, lz).getFluidState())) continue;
 								int wx = (sx << 4) + lx, wy = (sy << 4) + ly, wz = (sz << 4) + lz;
 								if (ShadeWater.falling(level.getFluidState(m.set(wx, wy - 1, wz)))) continue;
-								if (ShadeWater.height(level, m, wx, wy, wz, Integer.MAX_VALUE) < ShadeWater.FALL) continue;
-								falls.add(new int[] {wx, ShadeWater.surfaceUnder(level, m, wx, wy, wz), wz});
+								int h = ShadeWater.height(level, m, wx, wy, wz, Integer.MAX_VALUE, ShadeWater.CAP);
+								if (h < ShadeWater.FALL) continue;
+								falls.add(new int[] {wx, ShadeWater.surfaceUnder(level, m, wx, wy, wz), wz, ShadeWater.power(h)});
 							}
 						}
 					}
