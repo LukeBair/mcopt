@@ -58,6 +58,13 @@ vec3 viewPosAt(vec2 uv, float d) {
     return p.xyz / p.w;
 }
 
+// The view ray's direction through uv: two points on it (5 blocks out and the near plane), so the eye's own offset drops out. The
+// level projection carries the view bob's translation, which puts the eye a few centimetres off the origin; a direction from the
+// origin to a near point swung with it, and the clouds and sky bobbed far more than the world.
+vec3 viewDirAt(vec2 uv) {
+    return normalize(viewPosAt(uv, 0.01) - viewPosAt(uv, 1.0));
+}
+
 vec3 tonemap(vec3 c, float amount) {
     // Soft S-curve around mid grey plus a little saturation: keeps blacks and whites where vanilla has them.
     vec3 s = c * c * (3.0 - 2.0 * c);
@@ -339,16 +346,16 @@ void main() {
 
     // Stylized clouds in front of the sky and of terrain beyond them (never over the hand).
     if (CloudP.x > 0.5 && !hand && LightP.z < 0.5) {
-        vec3 dirV = viewPosAt(texCoord, 0.5);
+        vec3 dirV = viewDirAt(texCoord);
         float tLimit = CloudP.z;
         if (d0 > 0.0) tLimit = min(tLimit, length(viewPosAt(texCoord, d0)));
-        vec4 cl = clouds(normalize(dirV), tLimit, src.rgb);
+        vec4 cl = clouds(dirV, tLimit, src.rgb);
         col = mix(col, cl.rgb, cl.a);
     }
 
     // Forest god rays: warm sunlight added along the shafts, in front of whatever is behind them.
     if (CloudX.z > 0.5 && CloudX.w > 0.0 && !hand && LightP.z < 0.5) {
-        vec3 dirV = normalize(viewPosAt(texCoord, 0.5));
+        vec3 dirV = viewDirAt(texCoord);
         float tMax = d0 > 0.0 ? length(viewPosAt(texCoord, d0)) : 1e4;
         float g = godRays(dirV, tMax);
         // Brighter looking toward the sun (light scattered forward), and in the sun's colour.
@@ -358,7 +365,7 @@ void main() {
 
     // A vivid sunrise or sunset: the sky toward the horizon goes richer (saturation up, warmer), strongest near the sun.
     if (CloudX.y > 0.0 && d0 <= 0.0 && !hand && LightP.z < 0.5) {
-        vec3 dW = normalize((ViewInv * vec4(viewPosAt(texCoord, 0.5), 0.0)).xyz);
+        vec3 dW = normalize((ViewInv * vec4(viewDirAt(texCoord), 0.0)).xyz);
         vec3 sW = normalize((ViewInv * vec4(Sun.xyz, 0.0)).xyz);
         float lowSun = (1.0 - smoothstep(0.0, 0.3, sW.y)) * smoothstep(-0.15, 0.0, sW.y);
         float k = CloudX.y * lowSun * (1.0 - smoothstep(0.0, 0.6, dW.y)) * mix(0.5, 1.0, max(dot(dW, sW), 0.0));
