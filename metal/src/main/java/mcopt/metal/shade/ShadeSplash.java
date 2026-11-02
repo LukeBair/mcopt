@@ -151,7 +151,7 @@ public final class ShadeSplash {
 								if (!ShadeWater.falling(section.getBlockState(lx, ly, lz).getFluidState())) continue;
 								int wx = (sx << 4) + lx, wy = (sy << 4) + ly, wz = (sz << 4) + lz;
 								if (ShadeWater.falling(level.getFluidState(m.set(wx, wy - 1, wz)))) continue;
-								int h = ShadeWater.height(level, m, wx, wy, wz, Integer.MAX_VALUE, ShadeWater.CAP);
+								int h = ShadeWater.fallen(level, m, wx, wy, wz, ShadeWater.CAP) + 1;
 								if (h < ShadeWater.FALL) continue;
 								falls.add(new int[] {wx, ShadeWater.surfaceUnder(level, m, wx, wy, wz), wz, ShadeWater.power(h)});
 							}

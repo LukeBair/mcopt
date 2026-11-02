@@ -61,11 +61,14 @@ varyings: mcown.m gives the fragment stage no TRANSLUCENT constant, so F_WATER n
 and is to be redone another way; terrain.metal still has the sheet code. Toggling it remeshes the world. Each crash also throws up
 splash, spray and popping bubbles along the shore (ShadeSplash, ticked with ClientLevel.animateTick: it finds sea water touching
 the beach within 32 blocks every 2 s and fires when its breakerPhase, worked out the same way from the same clock, crosses the
-crash; more in storms and for bigger waves). Waterfalls (a falling column of 5 blocks or more): ShadeWater
-tags each falling block with its height above where it lands (200 + h, alpha) and how far the water has fallen to it from the
-column's top (0..7 in green's low 3 bits, full at 12 blocks), each worked out from the block's own neighbourhood so the tags agree
-across section edges; own_fs streaks foam down the column, more and whiter the farther it has fallen and thickest over the last
-blocks. Surface water within 7 blocks of where it lands is tagged with its corner's offset from the column (alpha 130.. for a
+crash; more in storms and for bigger waves). Waterfalls: ShadeWater tags all falling water, and the water on a ledge
+a fall hits and pours on over, with its height above where it lands (200 + h, alpha) and how far the water has fallen to it (0..7 in
+green's low 3 bits, full at 12 blocks): ShadeWater.fallen follows the flow back up, over ledges, while the path stays about 45
+degrees or steeper, so a cascade down a stepped cliff counts as one fall and water that runs on along a shallower slope counts
+nothing. Each is worked out from the block's own neighbourhood within reach of the mesher's region, so the tags agree across
+section edges. own_fs streaks foam down the falling faces, from none where the water starts to fall to many as it falls farther,
+whitest where it lands; faces turned up more than 45 degrees (a ledge's water) churn instead. Where one of 5 blocks or more lands,
+surface water within 7 blocks of where it lands is tagged with its corner's offset from the column (alpha 130.. for a
 pool, 150.. for water spreading over the ground, the rest in red's and blue's low 2 bits) and the column's intensity (green, from
 its height, full at 16): a pool churns white where it lands, wider and stronger for a taller fall, with rings of foam pushed
 outward and the surface heaving in 1/32 steps; water spreading over the ground runs white all the way to its edge. ShadeSplash adds

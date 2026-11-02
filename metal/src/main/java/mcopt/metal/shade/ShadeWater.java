@@ -85,15 +85,18 @@ public final class ShadeWater {
 	/** How far a waterfall has to fall for its column and impact to churn and splash, blocks. */
 	static final int FALL = 5;
 	/** A waterfall's intensity grows with its fall up to this, blocks: the column's streaks with how far it's fallen so far (FULL), the
-	 * pool's churn and the splashes with the column's whole height (CAP). */
-	static final int FULL = 12, CAP = 16;
+	 * pool's churn and the splashes with how far it fell to the pool (CAP). */
+	static final int FULL = 12, CAP = 15;
+	/** How far a fall is followed back sideways (over ledges it hits on the way down), blocks. */
+	private static final int RUN = 6;
 	/** How far around a waterfall's impact the water churns (a pool's, or all of it spreading over the ground), blocks. */
 	private static final int POOL = 7;
 
 	/**
-	 * A tall waterfall (FALL blocks or more), whose column lands at (cx, cz) with the water's surface at the top of block iy.
-	 * The falling column (fall true): each vertex tagged 200 + its height above the surface (0..15; 15 also when the surface is farther
-	 * down or not found), green its intensity, how far the water has fallen to it from the column's top at y top (FULL or more: 7).
+	 * A waterfall, whose column lands at (cx, cz) with the water's surface at the top of block iy.
+	 * Its falling water, or a ledge it pours over (fall true): each vertex tagged 200 + its height above the surface (0..15; 15 also
+	 * when the surface is farther down or not found), green its intensity, how far the water has fallen to it (fallen: the top of its
+	 * block at y top; FULL or more: 7). Those of tall ones (FALL blocks or more):
 	 * The water around where it lands (within POOL): its corner's offset from the column's centre + 7.5 along x and z (ix, iz 0..15)
 	 * split between the tag, 130 + (ix >> 2) + 4 (iz >> 2) (150 + for water spreading over the ground rather than a pool), and red
 	 * (ix & 3) and blue (iz & 3); green its intensity, power, from the column's height.
@@ -172,39 +175,48 @@ public final class ShadeWater {
 	private static final Tag SURFACE = (vx, vy, vz) -> 230;
 
 	/**
-	 * Whether the fluid at pos is part of a tall waterfall: in its falling column or surface water within POOL blocks of where it lands. The mesher's region holds the sections next to pos's, so lookups stay
-	 * within 16 blocks of pos's section.
+	 * Whether the fluid at pos is part of a waterfall: its falling water, or the water on a ledge it hits on the way down and pours on
+	 * over (tagged as the column, with how far it has fallen, so a cascade down a stepped cliff reads as one waterfall), or surface
+	 * water within POOL blocks of where one FALL blocks or more lands. The mesher's region holds the sections next to pos's; every
+	 * lookup here stays within 16 blocks of pos's section (and the same for any pos in it), so neighbouring sections agree.
 	 */
 	private static Fall fall(BlockAndTintGetter level, BlockPos pos, FluidState fluid) {
-		int lo = ((pos.getY() >> 4) - 1) << 4, hi = (((pos.getY() >> 4) + 2) << 4) - 1;
 		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
-		int sx = pos.getX() & ~15, sy = pos.getY() & ~15, sz = pos.getZ() & ~15;
+		int sx = pos.getX() & ~15, sy = pos.getY() & ~15, sz = pos.getZ() & ~15, x0 = pos.getX(), y0 = pos.getY(), z0 = pos.getZ();
 		if (falling(fluid)) {
-			// down the column to its bottom (within 15 blocks; farther and the bottom's left unknown), and up it to its top (within CAP)
-			int b = pos.getY();
-			while (b > pos.getY() - 15 && falling(level.getFluidState(m.set(pos.getX(), b - 1, pos.getZ())))) b--;
-			boolean bottom = !falling(level.getFluidState(m.set(pos.getX(), b - 1, pos.getZ())));
-			int up = height(level, m, pos.getX(), pos.getY() + 1, pos.getZ(), hi, CAP);
-			if (pos.getY() - b + 1 + up < FALL) return null;
-			int iy = bottom ? surfaceUnder(level, m, pos.getX(), b, pos.getZ()) : Integer.MIN_VALUE / 2;
-			return new Fall(pos.getX(), iy, pos.getZ(), true, false, pos.getY() + 1 + up, 0, sx, sy, sz);
+			// down the column to where it lands (within 15 blocks; farther and it's left unknown); how far it's fallen to here
+			int b = y0;
+			while (b > y0 - 15 && falling(level.getFluidState(m.set(x0, b - 1, z0)))) b--;
+			boolean bottom = !falling(level.getFluidState(m.set(x0, b - 1, z0)));
+			int iy = bottom ? surfaceUnder(level, m, x0, b, z0) : Integer.MIN_VALUE / 2;
+			return new Fall(x0, iy, z0, true, false, y0 + 1 + fallen(level, m, x0, y0, z0, FULL), 0, sx, sy, sz);
 		}
-		if (!level.getFluidState(m.set(pos.getX(), pos.getY() + 1, pos.getZ())).isEmpty()) return null;
+		if (!level.getFluidState(m.set(x0, y0 + 1, z0)).isEmpty()) return null;
+		if (!fluid.isSource()) {
+			// a ledge in a cascade: it pours over (falling water below it or below a neighbour), having fallen to it
+			boolean pours = falling(level.getFluidState(m.set(x0, y0 - 1, z0)));
+			for (int i = 0; i < 4 && !pours; i++) {
+				int x = x0 + (i == 0 ? 1 : i == 1 ? -1 : 0), z = z0 + (i == 2 ? 1 : i == 3 ? -1 : 0);
+				pours = level.getFluidState(m.set(x, y0, z)).is(FluidTags.WATER) && falling(level.getFluidState(m.set(x, y0 - 1, z)));
+			}
+			int f;
+			if (pours && (f = fallen(level, m, x0, y0, z0, FULL)) > 0) return new Fall(x0, y0 - 1, z0, true, false, y0 + 1 + f, 0, sx, sy, sz);
+		}
 		// a column's bottom just above this surface (it lands in the pool) or level with it (it lands on the ground and spreads), the
 		// nearest
 		Fall best = null;
 		int bestD = Integer.MAX_VALUE;
 		for (int dy = 1; dy >= 0; dy--) {
-			int y = pos.getY() + dy;
+			int y = y0 + dy;
 			for (int dz = -POOL; dz <= POOL; dz++) {
 				for (int dx = -POOL; dx <= POOL; dx++) {
-					int x = pos.getX() + dx, z = pos.getZ() + dz;
+					int x = x0 + dx, z = z0 + dz;
 					if (!falling(level.getFluidState(m.set(x, y, z))) || falling(level.getFluidState(m.set(x, y - 1, z)))) continue;
 					int d = dx * dx + dz * dz;
-					if (d >= bestD || surfaceUnder(level, m, x, y, z) != pos.getY()) continue;
-					int h = height(level, m, x, y, z, hi, CAP);
+					if (d >= bestD || surfaceUnder(level, m, x, y, z) != y0) continue;
+					int h = fallen(level, m, x, y, z, CAP) + 1;
 					if (h < FALL) continue;
-					best = new Fall(x, pos.getY(), z, false, dy == 0, 0, power(h), sx, sy, sz);
+					best = new Fall(x, y0, z, false, dy == 0, 0, power(h), sx, sy, sz);
 					bestD = d;
 				}
 			}
@@ -212,16 +224,47 @@ public final class ShadeWater {
 		return best;
 	}
 
+	/**
+	 * How far the water at (x, y, z) has fallen to the top of its block: blocks dropped, following its flow back up (up while there's
+	 * water above, else sideways to the neighbour nearer its source) for as long as that path stays about as steep as 45 degrees or
+	 * steeper (sideways no more than 2 blocks past the drop, RUN at most), up to max. So a fall keeps counting over the ledges it
+	 * hits, and water that has run on along a shallower slope or the flat counts nothing. Reads up to y + max and RUN sideways.
+	 */
+	static int fallen(BlockAndTintGetter level, BlockPos.MutableBlockPos m, int x, int y, int z, int max) {
+		int drop = 0, run = 0;
+		FluidState c = level.getFluidState(m.set(x, y, z));
+		while (drop < max) {
+			FluidState up = level.getFluidState(m.set(x, y + 1, z));
+			if (up.is(FluidTags.WATER)) {
+				y++;
+				drop++;
+				c = up;
+				continue;
+			}
+			if (c.isSource() || run >= RUN) break;
+			int best = c.getAmount(), bx = 0, bz = 0;
+			FluidState next = null;
+			for (int i = 0; i < 4; i++) {
+				int dx = i == 0 ? 1 : i == 1 ? -1 : 0, dz = i == 2 ? 1 : i == 3 ? -1 : 0;
+				FluidState n = level.getFluidState(m.set(x + dx, y, z + dz));
+				if (n.is(FluidTags.WATER) && n.getAmount() > best) {
+					best = n.getAmount();
+					bx = dx;
+					bz = dz;
+					next = n;
+				}
+			}
+			if (next == null || ++run > drop + 2) break;
+			x += bx;
+			z += bz;
+			c = next;
+		}
+		return drop;
+	}
+
 	/** The block whose top a column bottoming out at (x, b, z) lands on: the pool under it, or the ground (it spreads at b). */
 	static int surfaceUnder(BlockAndTintGetter level, BlockPos.MutableBlockPos m, int x, int b, int z) {
 		return level.getFluidState(m.set(x, b - 1, z)).is(FluidTags.WATER) ? b - 1 : b;
-	}
-
-	/** Falling water from (x, b, z) up, counted to at most max (and no higher than hi). */
-	static int height(BlockAndTintGetter level, BlockPos.MutableBlockPos m, int x, int b, int z, int hi, int max) {
-		int n = 0;
-		while (n < max && b + n <= hi && falling(level.getFluidState(m.set(x, b + n, z)))) n++;
-		return n;
 	}
 
 	/** A waterfall's intensity at its foot from its height: 0 at FALL blocks .. 7 at CAP or more. */

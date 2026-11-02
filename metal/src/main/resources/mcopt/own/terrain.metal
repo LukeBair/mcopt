@@ -1988,7 +1988,8 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 			if (tag >= 200u) {
 				// own_fs streaks foam down it, thickest over the last few blocks
 				float along = fmod(wp.x + wp.z, 1024.0), y = fmod(wp.y + 4096.0, 1024.0);
-				return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, 0.0, float4(along, y, -10.0 - float(tag - 200u), power));
+				return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, 0.0, float4(along, y, -10.0 - float(tag - 200u), power),
+					fmod(wp.xz + 4096.0, 1024.0));
 			}
 			// the pool heaves at each corner in 1/32-block steps, rerolled a few times a second, most at the centre and none at the
 			// pool's edge (shared corners with untagged water stay put)
@@ -2547,15 +2548,29 @@ static float4 fallSurface(float4 color, VOut in, constant Globals &g) {
 	float T = g.GameTime * 1200.0;
 	float3 foam = SEA_FOAM * in.light.rgb;
 	if (in.water.z > -39.5) {
-		// (the farther the water has fallen, in.water.w 0..1, the more and faster the streaks, and the whiter its last blocks)
-		float h = -10.0 - in.water.z, fallen = in.water.w;  // (blocks above the pool)
+		// (the farther the water has fallen, in.water.w 0..1, the more streaks, from none where it starts to fall, and the whiter
+		// where it lands)
+		float h = -10.0 - in.water.z, fallen = in.water.w;  // (blocks above where it lands)
+		float boost = (1.0 - smoothstep(0.5, 3.0, h)) * 0.45 * fallen;
+		// faces turned up more than 45 degrees (a ledge's water, from the world position's screen derivatives): churning foam there,
+		// not streaks
+		float3 wx = float3(dfdx(in.shore.x), dfdx(in.water.y), dfdx(in.shore.y)), wy = float3(dfdy(in.shore.x), dfdy(in.water.y), dfdy(in.shore.y));
+		float3 nrm = cross(wx, wy);
+		if (abs(nrm.y) > 0.7 * length(nrm)) {
+			float2 cell = floor(in.shore * 16.0);
+			float churn = seaHash(cell + 37.0 * floor(T * 4.0 + seaHash(cell + 11.0)));
+			float nz = 0.55 * seaCluster(cell, 2.0) + 0.45 * churn, l = min(0.7 * fallen + boost, 1.0) * 0.95;
+			if (nz < l) return float4(foam, max(color.a, 0.95));
+			if (nz < l + 0.08 * fallen) return float4(mix(color.rgb, foam, 0.45), max(color.a, 0.85));
+			return color;
+		}
 		float col = floor(in.water.x * 16.0);
 		float speed = 7.0 + 2.0 * seaHash(float2(col, 3.0));
 		float seg = floor((in.water.y + T * speed) * 4.0 + seaHash(float2(col, 9.0)) * 4.0);
-		float dense = mix(0.03, 0.5, fallen) + (1.0 - smoothstep(0.5, 4.0, h)) * mix(0.15, 0.45, fallen);
+		float dense = 0.5 * fallen * fallen + boost;
 		float r = seaHash(float2(col, seg));
 		if (r < dense) return float4(foam, max(color.a, 0.9));
-		if (r < dense + 0.12) return float4(mix(color.rgb, foam, 0.5), max(color.a, 0.8));
+		if (r < dense + 0.12 * fallen) return float4(mix(color.rgb, foam, 0.5), max(color.a, 0.8));
 		return color;
 	}
 	// in.water.w: the intensity 0..1 (+2 spreading over the ground: it all runs white, thinning to lace at the spread's far edge)
