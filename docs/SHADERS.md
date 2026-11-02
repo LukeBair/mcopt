@@ -48,7 +48,7 @@ a block at a biome's edge instead of leaving a step. The amplitude is 2 steps ca
 up to 2.5x that in the shallows (shoaling, from the water's depth around the corner). Crests are a touch lighter. Foam is blocky
 texel-sized drifting noise: on shore blocks (touching non-water), surging as each crest arrives, and in the shallows where the crests
 break. Swash: beach blocks (a sturdy top at sea level, air above) within 3 blocks of the sea get a sheet of the nearest sea water's
-top face half a texture pixel over them, shown only out to how far the wave at that spot runs up the beach (in 1/32-block steps,
+top face half a texture pixel over them, shown only out to how far the sea runs up the beach on an ~8 s surge cycle (in 1/32-block steps,
 judged per texel so the edge is blocky), with foam along its edge; so the sea washes up over the shore block and a few blocks inland,
 farther in storms. Only blocks at sea level get sheets (not the step up behind them). Toggling it remeshes the world.
 `mcopt.shade.rays` (default true, "Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the

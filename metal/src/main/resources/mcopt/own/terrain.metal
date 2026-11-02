@@ -1905,6 +1905,13 @@ static float seaWave(int2 b, float T) {
 	return h;
 }
 
+// mcopt shaders: the swash cycle at a block corner, 0..1: the sea surges up the shore and draws back every ~8 s, its phase drifting
+// slowly along the coast so neighbouring stretches are a little out of step
+static float seaSurge(int2 b, float T) {
+	float2 p = float2(b & 4095);
+	return smoothstep(-0.3, 1.0, sin(T * 0.8 + p.x * 0.045 + p.y * 0.031));
+}
+
 static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df, device const void *arenaRaw, constant Projection &proj,
 	constant Globals &g, constant Terrain &t, texture2d<float> lightmap, sampler lightSampler, thread float3 &rel) {
 	Vtx v;
@@ -1942,20 +1949,24 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 			float h = seaWave(corner, g.GameTime * 1200.0);
 			float2 xz = float2(origin.xz & 1023) + float2(v.pos.xz);
 			if (swash) {
-				// how far up the beach this corner's wave runs now (blocks): the swell past a threshold, longer in rough weather
+				// how far up the beach the sea runs at this corner now (blocks): the surge, a little farther on a crest, longer in rough weather
 				uint low = tag - 101u;
 				float q = float(low / 5u) * 0.25;
-				float reach = max(h - 0.1, 0.0) / 0.9 * df.wave.x * 32.0 * 0.45 * q;
+				float surge = seaSurge(corner, g.GameTime * 1200.0);
+				float reach = surge * (0.8 + 0.2 * h) * (1.0 + df.wave.x * 32.0 * 0.3) * q;
 				return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, 0.0, float4(xz, -1.0 - float(low % 5u), reach));
 			}
 			// Sea water: the surface moved by the wave field at this corner in 1/32-block steps, scaled by the corner's ocean share and
 			// taller where it's shallow. Neighbouring blocks share their corners, so the sea stays closed.
 			uint low = tag - 1u;
 			float k = float(low % 5u), sh = float(low / 5u % 4u), q = float(low / 20u) * 0.25;
-			float amp = df.wave.x * q * (1.0 + 0.5 * sh);
-			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(h * amp * 32.0) / 32.0 : 0.0;
-			// foam: on shore blocks, surging as each crest arrives; in the shallows, where the crests break
-			float foam = k * 0.25 * df.wave.y * (0.55 + 0.9 * smoothstep(-0.3, 0.6, h)) + sh / 3.0 * smoothstep(0.35, 0.8, h) * df.wave.y * 0.7;
+			float surge = seaSurge(corner, g.GameTime * 1200.0);
+			// the swell, plus in the shallows the surge lifting the water toward the shore's top as it runs up the beach
+			float lift = h * df.wave.x * (1.0 + 0.5 * sh) + surge * sh / 3.0 * df.wave.x * 0.8;
+			float yOff = abs(fract(float(v.pos.y)) - 0.8889) < 0.03 ? round(lift * q * 32.0) / 32.0 : 0.0;
+			// foam cover 0..1: on shore blocks, thickest as the surge comes in; in the shallows, where the crests break; more in rough weather
+			float foam = (k > 0.0 ? (0.3 + 0.12 * k) * (0.5 + 0.8 * surge) : 0.0) + sh / 3.0 * smoothstep(0.3, 0.8, h) * 0.6;
+			foam *= 0.8 + 0.2 * df.wave.y;
 			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff, float4(xz, foam * q, h * q));
 		}
 	}
@@ -2387,7 +2398,7 @@ static float4 swashSheet(float4 color, VOut in) {
 	if (in.water.w <= 0.0 || dc > reach) discard_fragment();
 	float3 tint = getColor(in).rgb;
 	float lit = max(tint.r, max(tint.g, tint.b));
-	if (reach - dc < 0.15) return float4(float3(0.9, 0.95, 1.0) * lit, 0.9);
+	if (reach - dc < 0.22) return float4(float3(0.9, 0.95, 1.0) * lit, 0.92);
 	return float4(color.rgb * 1.08, color.a * 0.75);
 }
 
@@ -2403,7 +2414,7 @@ static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
 		f = f * f * (3.0 - 2.0 * f);
 		float n = mix(mix(seaHash(i), seaHash(i + float2(1, 0)), f.x), mix(seaHash(i + float2(0, 1)), seaHash(i + float2(1, 1)), f.x), f.y);
 		n = n * 0.75 + 0.25 * seaHash(cell + floor(T * 1.5));
-		if (n > 1.0 - 0.32 * min(in.water.z, 1.6)) {
+		if (n > 1.0 - 0.75 * min(in.water.z, 1.2)) {
 			float3 tint = getColor(in).rgb;
 			float lit = max(tint.r, max(tint.g, tint.b));
 			color = float4(float3(0.9, 0.95, 1.0) * lit, max(color.a, 0.9));
