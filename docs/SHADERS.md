@@ -44,7 +44,7 @@ the composite shifts the colour of what they light toward it, where the sun isn'
 an ocean or beach biome is tagged per vertex when meshed (ShadeWater, in the vertex alpha), and terrain.metal raises or lowers the
 surface at each block corner in 1/32-block steps (half a texture pixel) by a field of crossing swells. Per corner, so neighbouring
 blocks share their edges; the amplitude is scaled by how many of the corner's 4 columns are ocean or beach, so the waves fade out over
-a block at a biome's edge instead of leaving a step. The amplitude is 3 steps calm, 5 in rain, 8 in a thunderstorm (DrawFrame.wave),
+a block at a biome's edge instead of leaving a step. The amplitude is 3 steps calm, 6 in rain, 12 in a thunderstorm (DrawFrame.wave), with a short faster chop on top in rough weather,
 up to 2.5x that in the shallows (shoaling, from the water's depth around the corner). Crests are lighter, troughs darker. Breakers:
 each corner is also tagged with its distance from the shore (0..4 blocks), and every ~7 s (the phase drifting along the coast, each
 wave a random 0.7..1.3 in size) a crest rolls in from 5 blocks out, growing as it comes and breaking into foam inside ~3 blocks;
@@ -52,7 +52,8 @@ the shallows draw back just before it lands, then the water by the beach heaves 
 from the corner's shore distance (VOut.shore): the crest breaks into foam inside ~3.5 blocks with whitewater trailing behind it, a
 burst covers the first block or so as it lands, then the foam line slides back out to ~2.5 blocks as the water draws back, thinning
 and leaving lace shoreward of it, and fades on out as the next crest comes in; the waterline keeps a thin rim. The foam pattern rides
-the water (carried up to 1.5 blocks in and back out, a texel at a time). Plus whitecaps on the tallest swell in rain and storms, broken
+the water (carried up to 1.5 blocks in and back out, a texel at a time). Plus whitecaps riding the swell's crests in rain and storms (more foam the higher the crest, starting lower down the crest the
+rougher the weather), broken
 into drifting patches a few blocks across, each 3-block stretch flaring and dying at its own times. It is drawn as white texel
 cells (16 a block), lit by the lightmap as the water is (day, night, torches, dynamic lights): patches from a clustered field, ragged and churning from each cell's own value, so
 thin foam is scattered lace and thick foam nearly solid. (Until this fix own_fs never saw the water

@@ -1975,6 +1975,10 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 			}
 			int2 corner = origin.xz + int2(round(float2(v.pos.xz)));
 			float h = seaWave(corner, g.GameTime * 1200.0);
+			// rough weather (0 calm, ~0.6 rain, 1 thunderstorm): a short, faster chop on top of the swell
+			float storm = saturate((df.wave.y - 1.0) / 1.6), Tc = g.GameTime * 1200.0;
+			float2 cp = float2(corner & 4095);
+			h += storm * 0.35 * sin(cp.x * 0.83 - cp.y * 0.47 + Tc * 2.6) * sin(cp.y * 0.71 + cp.x * 0.19 - Tc * 2.1);
 			float2 xz = float2(origin.xz & 1023) + float2(v.pos.xz);
 			// the full run-up of a mid-sized breaker here (blocks): 1.6 calm, longer in rough weather, scaled by the ocean share
 			float amp32 = df.wave.x * 32.0;
@@ -2001,10 +2005,13 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 			float crash = exp(-du * du) * edge;
 			float draw = smoothstep(BREAK_CRASH - 0.18, BREAK_CRASH - 0.05, u) * (1.0 - smoothstep(BREAK_CRASH - 0.05, BREAK_CRASH, u)) * edge;
 			float lift = h * df.wave.x * (1.0 + 0.5 * sh) + (crest * (2.0 + 0.5 * amp32) * size + crash * 3.5 * size - draw * 2.0) / 32.0;
-			float yOff = round(min(lift * q, 3.5 / 32.0) * 32.0) / 32.0;
+			// (by the shore no higher than the beach's top; farther out storm crests can stand taller)
+			float yOff = round(min(lift * q, mix(3.5 / 32.0, 1.0, saturate((k - 1.0) / 2.0))) * 32.0) / 32.0;
 			if (abs(fract(float(v.pos.y)) - 0.8889) >= 0.03) yOff = 0.0;
 			// foam: whitecaps on the tallest swell in rain and storms here; the breakers' foam own_fs works out from the shore distance
-			float caps = smoothstep(0.7, 1.0, h) * saturate(df.wave.y - 1.0) * 0.6;
+			// (they ride the crests: the higher the crest the more foam, and the rougher the weather the lower down the crest they start)
+			float capsFrom = mix(0.9, 0.45, storm);
+			float caps = smoothstep(capsFrom, capsFrom + 0.35, h) * storm;
 			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff,
 				float4(xz, caps * min(q * 2.0, 1.0), (h + 1.5 * crest * size + crash) * q), float2(k, q));
 		}

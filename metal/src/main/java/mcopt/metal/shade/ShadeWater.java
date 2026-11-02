@@ -226,8 +226,8 @@ public final class ShadeWater {
 		MemoryUtil.memPutFloat(d + 8, 1f);  // (tags are decoded, the alpha restored, even while the waves are flat)
 		if (!Shade.enabled || level == null) return;
 		float rain = level.getRainLevel(1f), thunder = level.getThunderLevel(1f);
-		// Calm: 3 steps of 1/32 either way; rain adds two; a storm three more.
-		float amp = (3f + 2f * rain + 3f * thunder) / 32f;
+		// Calm: 3 steps of 1/32 either way; rain doubles it; a thunderstorm doubles it again (12 steps, 3/8 of a block).
+		float amp = (3f + 3f * rain + 6f * thunder) / 32f;
 		MemoryUtil.memPutFloat(d, amp);
 		MemoryUtil.memPutFloat(d + 4, 1f + rain + thunder);
 	}
