@@ -24,7 +24,7 @@ Only mcopt's / vanilla's own terrain is shaded: Distant Horizons writes its LODs
 sky, and the effects also fade out over the last chunk of the render distance. The first-person hand and held item are drawn after
 the level depth is copied, so the composite reads the main depth (which by then holds only the hand) and leaves those pixels unshaded.
 
-`mcopt.shade.clouds` (default true, "Stylized clouds"; follows Video Settings' clouds on/off) replaces vanilla's cloud mesh
+`mcopt.shade.clouds` (default true, "Stylized clouds"; independent of Video Settings' Clouds option) replaces vanilla's cloud mesh
 (ShadeCloudRendererMixin) with clouds ray-marched in the composite from vanilla's `clouds.png` (so resource packs apply), 12-block
 cells drifting at vanilla's speed. ShadeClouds turns the map into a texture: r cover, g density (share of cloud in the 7x7 cells
 around), b type (a slow random field: flat stratus regions, ordinary cumulus, towering cumulus). Columns grow with density and type in

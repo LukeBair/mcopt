@@ -6,7 +6,6 @@ import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import java.io.InputStream;
-import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
 
@@ -26,11 +25,11 @@ public final class ShadeClouds {
 	private ShadeClouds() {
 	}
 
-	/** Our clouds replace vanilla's this frame (shaders on, clouds on in Video Settings, and the map loaded). */
+	/** Our clouds replace vanilla's this frame (shaders and Stylized clouds on, a sky). Independent of vanilla's Clouds setting. */
 	public static boolean active() {
 		if (!Shade.ON || !Shade.enabled || Shade.suppress || !Shade.CLOUDS || failed) return false;
 		Minecraft mc = Minecraft.getInstance();
-		return mc.level != null && mc.options.getCloudStatus() != CloudStatus.OFF && mc.level.dimensionType().hasSkyLight();
+		return mc.level != null && mc.level.dimensionType().hasSkyLight();
 	}
 
 	/** The cell map (r: cloud, g: density 0..1, b: cloud type 0..1), loading it on first use; null if it couldn't be. */
