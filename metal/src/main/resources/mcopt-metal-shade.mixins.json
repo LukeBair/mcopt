@@ -2,6 +2,6 @@
 	"required": false,
 	"package": "mcopt.metal.mixin.shade",
 	"compatibilityLevel": "JAVA_25",
-	"client": ["ShadeGameRendererMixin", "ShadeShaderManagerMixin", "ShadeLevelRendererMixin", "ShadeVideoSettingsMixin", "ShadeCloudRendererMixin", "ShadeRenderScaleMixin", "ShadeLevelProjectionMixin"],
+	"client": ["ShadeGameRendererMixin", "ShadeShaderManagerMixin", "ShadeLevelRendererMixin", "ShadeVideoSettingsMixin", "ShadeCloudRendererMixin", "ShadeRenderScaleMixin", "ShadeLevelProjectionMixin", "ShadeClientLevelMixin"],
 	"injectors": { "defaultRequire": 0 }
 }

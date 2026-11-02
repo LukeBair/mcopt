@@ -58,7 +58,13 @@ into drifting patches a few blocks across, each 3-block stretch flaring and dyin
 cells (16 a block), lit by the lightmap as the water is (day, night, torches, dynamic lights): patches from a clustered field, ragged and churning from each cell's own value, so
 thin foam is scattered lace and thick foam nearly solid. (Until this fix own_fs never saw the water
 varyings: mcown.m gives the fragment stage no TRANSLUCENT constant, so F_WATER now also follows the cutout-at-0.1 variant.) Swash (sheets of water running up the beach, ShadeWater.SHEETS) is switched off for now: the spill didn't read in game
-and is to be redone another way; terrain.metal still has the sheet code. Toggling it remeshes the world.
+and is to be redone another way; terrain.metal still has the sheet code. Toggling it remeshes the world. Each crash also throws up
+splash, spray and popping bubbles along the shore (ShadeSplash, ticked with ClientLevel.animateTick: it finds sea water touching
+the beach within 32 blocks every 2 s and fires when its breakerPhase, worked out the same way from the same clock, crosses the
+crash; more in storms and for bigger waves). Tall waterfalls (a falling column of 10 blocks or more): ShadeWater tags the column
+(200 + height above the pool) and the surface water within 3 blocks of where it lands (130 + its corner's offset from the column);
+own_fs streaks foam down the column, nearly solid over the last couple of blocks, and churns the pool white where it lands with
+rings of foam pushed outward, the pool's surface heaving in 1/32 steps; ShadeSplash adds a constant splash, mist and bubbles there.
 `mcopt.shade.rays` (currently switched off in code, and the option hidden: the shafts weren't reading in game) ("Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
 camera from the heightmaps (open to the sky to the ground, roofed by leaves 3 blocks away on most sides), keeps the 12 nearest
 (4 blocks apart) and the composite adds a soft warm glow along a shaft from each gap down to the ground along the sunlight,

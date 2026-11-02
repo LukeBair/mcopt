@@ -11,6 +11,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FlowingFluid;
 import net.minecraft.world.level.material.FluidState;
 import org.lwjgl.system.MemoryUtil;
 
@@ -51,8 +52,9 @@ public final class ShadeWater {
 	 * Sea water's surroundings for its per-corner tags: ocean and depth for the 3x3 columns around it (x fastest), and each of its 4
 	 * corners' distance from the shore (corner x + 2 z).
 	 */
-	public record Sea(int x, int z, int[] shore, boolean[] ocean, int[] depth) {
-		int tag(float vx, float vz) {
+	public record Sea(int x, int z, int[] shore, boolean[] ocean, int[] depth) implements Tag {
+		@Override
+		public int tag(float vx, float vy, float vz) {
 			int cx = corner(vx, this.x), cz = corner(vz, this.z), q = 0, depth = 0;
 			for (int dz = cz - 1; dz <= cz; dz++) {
 				for (int dx = cx - 1; dx <= cx; dx++) {
@@ -67,12 +69,36 @@ public final class ShadeWater {
 		}
 	}
 
+	/** A fluid block's vertex tags (per vertex, from its section-relative position): 1..255, or 0 to leave the vertex alone. */
+	public interface Tag {
+		int tag(float vx, float vy, float vz);
+	}
+
+	/** How far a waterfall has to fall for its impact to churn and splash, blocks. */
+	static final int FALL = 10;
+	/** How far around a waterfall's impact the pool churns, blocks. */
+	private static final int POOL = 3;
+
+	/**
+	 * Water near the foot of a tall waterfall (FALL blocks or more), whose column lands at (cx, cz) with the pool's surface at the
+	 * top of block iy: the falling column (fall true: each vertex tagged 200 + its height above the surface, 0..20) or the pool's
+	 * water around it (each vertex 130 + ix + 8 iz, its corner's offset from the column's centre + 3.5 along x and z, 0..7).
+	 */
+	public record Fall(int cx, int iy, int cz, boolean fall, int sx, int sy, int sz) implements Tag {
+		@Override
+		public int tag(float vx, float vy, float vz) {
+			if (this.fall) return 200 + Math.max(0, Math.min(20, Math.round(this.sy + vy) - this.iy - 1));
+			int ix = Math.max(0, Math.min(7, this.sx + Math.round(vx) - this.cx + 3)), iz = Math.max(0, Math.min(7, this.sz + Math.round(vz) - this.cz + 3));
+			return 130 + ix + 8 * iz;
+		}
+	}
+
 	/** The block corner (0 or 1 along this axis) a section-relative vertex coordinate sits on, for the block at world coordinate b. */
 	private static int corner(float v, int b) {
 		return Math.max(0, Math.min(1, Math.round(v) - (b & 15)));
 	}
 
-	private static boolean ocean(ClientLevel cl, BlockPos p) {
+	static boolean ocean(ClientLevel cl, BlockPos p) {
 		try {
 			var biome = cl.getBiome(p);
 			return biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_DEEP_OCEAN) || biome.is(BiomeTags.IS_BEACH);
@@ -95,9 +121,70 @@ public final class ShadeWater {
 		return n;
 	}
 
-	/** The surroundings of the fluid at pos for tagging, or null to leave it untagged. Called on the meshing threads. */
-	public static Sea sea(BlockAndTintGetter level, BlockPos pos, FluidState fluid) {
-		if (!fluid.is(FluidTags.WATER) || !fluid.isSource()) return null;
+	/** Falling water (a waterfall's column). */
+	static boolean falling(FluidState f) {
+		return f.is(FluidTags.WATER) && !f.isSource() && f.getValue(FlowingFluid.FALLING);
+	}
+
+	/**
+	 * The tags for the fluid at pos, or null to leave it untagged: by a tall waterfall's foot (Fall), else the open sea's (Sea). Called
+	 * on the meshing threads.
+	 */
+	public static Tag sea(BlockAndTintGetter level, BlockPos pos, FluidState fluid) {
+		if (!fluid.is(FluidTags.WATER)) return null;
+		Fall fall = fall(level, pos, fluid);
+		return fall != null ? fall : open(level, pos, fluid);
+	}
+
+	/**
+	 * Whether the fluid at pos is part of a tall waterfall's foot: in its falling column (up to 20 blocks above the surface it lands on)
+	 * or surface water within POOL blocks of where it lands. The mesher's region holds the sections next to pos's, so lookups stay
+	 * within 16 blocks of pos's section.
+	 */
+	private static Fall fall(BlockAndTintGetter level, BlockPos pos, FluidState fluid) {
+		int lo = ((pos.getY() >> 4) - 1) << 4, hi = (((pos.getY() >> 4) + 2) << 4) - 1;
+		BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+		int sx = pos.getX() & ~15, sy = pos.getY() & ~15, sz = pos.getZ() & ~15;
+		if (falling(fluid)) {
+			// down the column to its bottom, then its height from there
+			int b = pos.getY();
+			while (b > lo && b > pos.getY() - 21 && falling(level.getFluidState(m.set(pos.getX(), b - 1, pos.getZ())))) b--;
+			if (b - 1 <= lo || pos.getY() - b > 20) return null;
+			int iy = surfaceUnder(level, m, pos.getX(), b, pos.getZ());
+			if (height(level, m, pos.getX(), b, pos.getZ(), hi) < FALL) return null;
+			return new Fall(pos.getX(), iy, pos.getZ(), true, sx, sy, sz);
+		}
+		if (!level.getFluidState(m.set(pos.getX(), pos.getY() + 1, pos.getZ())).isEmpty()) return null;
+		// a column's bottom just above this surface (it lands in the pool) or level with it (it lands on the ground and spreads)
+		for (int dy = 1; dy >= 0; dy--) {
+			int y = pos.getY() + dy;
+			for (int dz = -POOL; dz <= POOL; dz++) {
+				for (int dx = -POOL; dx <= POOL; dx++) {
+					int x = pos.getX() + dx, z = pos.getZ() + dz;
+					if (!falling(level.getFluidState(m.set(x, y, z))) || falling(level.getFluidState(m.set(x, y - 1, z)))) continue;
+					if (surfaceUnder(level, m, x, y, z) != pos.getY() || height(level, m, x, y, z, hi) < FALL) continue;
+					return new Fall(x, pos.getY(), z, false, sx, sy, sz);
+				}
+			}
+		}
+		return null;
+	}
+
+	/** The block whose top a column bottoming out at (x, b, z) lands on: the pool under it, or the ground (it spreads at b). */
+	static int surfaceUnder(BlockAndTintGetter level, BlockPos.MutableBlockPos m, int x, int b, int z) {
+		return level.getFluidState(m.set(x, b - 1, z)).is(FluidTags.WATER) ? b - 1 : b;
+	}
+
+	/** Falling water from (x, b, z) up, counted to at most FALL (and no higher than hi). */
+	static int height(BlockAndTintGetter level, BlockPos.MutableBlockPos m, int x, int b, int z, int hi) {
+		int n = 0;
+		while (n < FALL && b + n <= hi && falling(level.getFluidState(m.set(x, b + n, z)))) n++;
+		return n;
+	}
+
+	/** The open sea's surroundings for the water at pos, or null. */
+	private static Sea open(BlockAndTintGetter level, BlockPos pos, FluidState fluid) {
+		if (!fluid.isSource()) return null;
 		ClientLevel cl = Minecraft.getInstance().level;
 		if (cl == null || pos.getY() != cl.getSeaLevel() - 1) return null;
 		BlockPos up = pos.above();
@@ -144,7 +231,7 @@ public final class ShadeWater {
 	}
 
 	/** Wraps a vertex consumer so the fluid's vertices carry their tags in their alpha (FluidRenderer's addVertex only). */
-	public static VertexConsumer tagged(VertexConsumer out, Sea sea) {
+	public static VertexConsumer tagged(VertexConsumer out, Tag sea) {
 		return new Tagged(out, sea);
 	}
 
@@ -297,10 +384,11 @@ public final class ShadeWater {
 		}
 	}
 
-	private record Tagged(VertexConsumer out, Sea sea) implements VertexConsumer {
+	private record Tagged(VertexConsumer out, Tag sea) implements VertexConsumer {
 		@Override
 		public void addVertex(float x, float y, float z, int color, float u, float v, int overlayCoords, int lightCoords, float nx, float ny, float nz) {
-			if (color >>> 24 == 255) color = color & 0x00FFFFFF | (255 - this.sea.tag(x, z)) << 24;
+			int t;
+			if (color >>> 24 == 255 && (t = this.sea.tag(x, y, z)) > 0) color = color & 0x00FFFFFF | (255 - t) << 24;
 			this.out.addVertex(x, y, z, color, u, v, overlayCoords, lightCoords, nx, ny, nz);
 		}
 

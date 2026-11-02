@@ -1616,8 +1616,8 @@ constant bool F_WATER = (is_function_constant_defined(TRANSLUCENT) ? TRANSLUCENT
 
 struct VOut {
 	float4 pos [[position]];
-	float4 water [[function_constant(F_WATER)]];  // world xz (mod 1024), foam level (swash: -1 - distance up the beach), wave height -1..1 (swash: reach; 0: untagged)
-	float2 shore [[function_constant(F_WATER)]];  // tagged sea: distance from the shore (blocks, 0..4: 4 or more), ocean share 0..1; else 0
+	float4 water [[function_constant(F_WATER)]];  // world xz (mod 1024), foam level (swash: -1 - distance up the beach), wave height -1..1 (swash: reach; 0: untagged); waterfall column: along, y, -10 - height; pool: x, z, -40
+	float2 shore [[function_constant(F_WATER)]];  // tagged sea: distance from the shore (blocks, 0..4: 4 or more), ocean share 0..1; waterfall pool: offset from the impact; else 0
 	float3 light [[function_constant(F_WATER)]];  // the lightmap's colour at the vertex (sky and block light, time of day): the foam's light
 	float sphericalVertexDistance [[function_constant(F_VARY)]];
 	float cylindricalVertexDistance [[function_constant(F_RICH)]];
@@ -1903,6 +1903,13 @@ vertex VOut own_vs(uint vid [[vertex_id]], uint iid [[instance_id]], constant Dr
 }
 
 // one arena vertex as vanilla's terrain.vsh shades it (own_vs, own_mesh); rel: its section-relative position
+// mcopt shaders: a value-noise hash for the foam
+static float seaHash(float2 p) {
+	float3 p3 = fract(float3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
 // mcopt shaders: the sea's wave field at a block, -1..1: three long swells crossing at angles, drifting with time (seconds)
 static float seaWave(int2 b, float T) {
 	float2 p = float2(b & 4095);
@@ -1963,6 +1970,29 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 	}
 	if (TRANSLUCENT && df.wave.z > 0.0) {
 		uint tag = 255u - uint(v.color.a);
+		if (tag >= 130u && tag <= 220u) {
+			// ShadeWater's tags at a tall waterfall's foot: 130..193 the pool around where it lands (the corner's offset from the
+			// column's centre), 200..220 the falling column (height above the pool's surface)
+			v.color.a = 255;
+			if (df.wave.x <= 0.0) return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel);
+			float T = g.GameTime * 1200.0;
+			float3 wp = float3(origin) + float3(v.pos);
+			if (tag >= 200u) {
+				// own_fs streaks foam down it, thickest over the last few blocks
+				float along = fmod(wp.x + wp.z, 1024.0), y = fmod(wp.y + 4096.0, 1024.0);
+				return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, 0.0, float4(along, y, -10.0 - float(tag - 200u), 0.0));
+			}
+			// the pool heaves at each corner in 1/32-block steps, rerolled a few times a second, most at the centre and none at the
+			// pool's edge (shared corners with untagged water stay put)
+			uint low = tag - 130u;
+			float2 off = float2(float(low % 8u), float(low / 8u)) - 3.5;
+			float near = saturate(1.0 - length(off) / 3.5);
+			int2 corner = origin.xz + int2(round(float2(v.pos.xz)));
+			float heave = (seaHash(float2(corner & 1023) + 13.0 * floor(T * 3.0 + seaHash(float2(corner & 1023)))) - 0.5) * 5.0 * near;
+			float yOff = fract(float(v.pos.y)) > 0.05 ? round(heave) / 32.0 : 0.0;
+			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff,
+				float4(fmod(wp.xz + 4096.0, 1024.0), -40.0, 0.0), off);
+		}
 		if (tag >= 1u && tag <= 125u) {
 			// ShadeWater's tags: 1..100 sea water, 101..125 a swash sheet over the beach
 			v.color.a = 255;
@@ -2423,13 +2453,6 @@ static float linear_fog_value(float vertexDistance, float fogStart, float fogEnd
 // mcopt shaders: foam's colour, lit by the lightmap as the water is (VOut.light: day, night, torches, dynamic lights)
 #define SEA_FOAM float3(0.97, 0.98, 1.0)
 
-// mcopt shaders: a value-noise hash for the foam
-static float seaHash(float2 p) {
-	float3 p3 = fract(float3(p.xyx) * 0.1031);
-	p3 += dot(p3, p3.yzx + 33.33);
-	return fract((p3.x + p3.y) * p3.z);
-}
-
 // mcopt shaders: tagged sea water's look. Crests lighter and troughs darker, and blocky white foam (SEA_FOAM) covering about the
 // share of the surface the vertex stage's foam level asks for (the shore band, breaking crests, storm whitecaps).
 // A swash sheet (water.z -1 - its distance up the beach, blocks; water.w a full run-up there): the breaker's water out to how far it
@@ -2507,7 +2530,46 @@ static float seaCluster(float2 cell, float scale) {
 	return mix(mix(seaHash(i), seaHash(i + float2(1, 0)), f.x), mix(seaHash(i + float2(0, 1)), seaHash(i + float2(1, 1)), f.x), f.y);
 }
 
+// mcopt shaders: a tall waterfall's foot (ShadeWater.Fall). The column: white streaks rushing down it, a cell per texture pixel
+// across and a quarter block long, sparse up high and nearly solid over the last couple of blocks. The pool around where it lands:
+// churning foam, solid where it lands and broken further out, with rings of it pushed outward; both lit as the water is.
+static float4 fallSurface(float4 color, VOut in, constant Globals &g) {
+	float T = g.GameTime * 1200.0;
+	float3 foam = SEA_FOAM * in.light;
+	if (in.water.z > -39.5) {
+		float h = -10.0 - in.water.z;  // (blocks above the pool)
+		float col = floor(in.water.x * 16.0);
+		float speed = 7.0 + 2.0 * seaHash(float2(col, 3.0));
+		float seg = floor((in.water.y + T * speed) * 4.0 + seaHash(float2(col, 9.0)) * 4.0);
+		float dense = mix(0.18, 0.9, 1.0 - smoothstep(0.5, 4.0, h));
+		float r = seaHash(float2(col, seg));
+		if (r < dense) return float4(foam, max(color.a, 0.9));
+		if (r < dense + 0.12) return float4(mix(color.rgb, foam, 0.5), max(color.a, 0.8));
+		return color;
+	}
+	float d = length(in.shore);
+	float2 dir = d > 1e-3 ? in.shore / d : float2(0.0);
+	float level = 1.15 * (1.0 - smoothstep(0.4, 2.8, d));
+	for (int k = 0; k < 2; k++) {
+		float ph = fract(T * 0.55 + 0.5 * float(k));
+		float rr = 0.6 + 2.9 * ph, x = d - rr;
+		level = max(level, exp(-x * x / 0.18) * 0.75 * (1.0 - ph));
+	}
+	level *= 1.0 - smoothstep(2.9, 3.5, d);
+	if (level <= 0.0) return color;
+	// cells carried outward from the impact, a texel at a time, rerolled about four times a second
+	float2 p = in.water.xy - dir * floor(fract(T * 0.7) * 1.2 * 16.0) / 16.0;
+	float2 cell = floor(p * 16.0);
+	float churn = seaHash(cell + 37.0 * floor(T * 4.0 + seaHash(cell + 11.0)));
+	float nz = 0.55 * seaCluster(cell, 2.0) + 0.45 * churn;
+	float l = min(level, 1.0) * 0.97;
+	if (nz < l) return float4(foam, max(color.a, 0.95));
+	if (nz < l + 0.08) return float4(mix(color.rgb, foam, 0.45), max(color.a, 0.85));
+	return color;
+}
+
 static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
+	if (in.water.z < -9.5) return fallSurface(color, in, g);
 	if (in.water.z < -0.5) return swashSheet(color, in, g);
 	if (in.water.z <= 0.0 && in.water.w == 0.0 && in.shore.y <= 0.0) return color;
 	color.rgb *= 1.0 + 0.15 * clamp(in.water.w, -1.0, 2.0);

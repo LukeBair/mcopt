@@ -185,8 +185,8 @@ public final class OwnMesher {
 					}
 					FluidState fluidState = blockState.getFluidState();
 					if (!fluidState.isEmpty()) {
-						// mcopt shaders: open-sea water is tagged for blocky waves and shore foam (ShadeWater)
-						mcopt.metal.shade.ShadeWater.Sea sea = waves ? mcopt.metal.shade.ShadeWater.sea(level, pos, fluidState) : null;
+						// mcopt shaders: open-sea water is tagged for blocky waves and shore foam, a tall waterfall's foot for its churn (ShadeWater)
+						mcopt.metal.shade.ShadeWater.Tag sea = waves ? mcopt.metal.shade.ShadeWater.sea(level, pos, fluidState) : null;
 						fluidRenderer.tesselate(level, pos, sea == null ? fluidOutput : l -> mcopt.metal.shade.ShadeWater.tagged(fluidOutput.getBuilder(l), sea),
 							blockState, fluidState);
 					} else if (waves) {
