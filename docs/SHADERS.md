@@ -47,15 +47,14 @@ blocks share their edges; the amplitude is scaled by how many of the corner's 4 
 a block at a biome's edge instead of leaving a step. The amplitude is 3 steps calm, 5 in rain, 8 in a thunderstorm (DrawFrame.wave),
 up to 2.5x that in the shallows (shoaling, from the water's depth around the corner). Crests are lighter, troughs darker. Breakers:
 each corner is also tagged with its distance from the shore (0..4 blocks), and every ~7 s (the phase drifting along the coast, each
-wave a random 0.7..1.3 in size) a crest rolls in from 5 blocks out, growing as it comes, breaking into foam inside ~3 blocks with
-whitewater trailing behind it; the shallows draw back just before it lands, then the water by the beach heaves up flush with the
-shore's top in a burst of foam that boils away. Foam is blocky texel-sized drifting noise, with a thin line along the shore at all
-times. Swash: beach blocks (a sturdy top at sea level, air above) within 3 blocks of the sea get a sheet of the nearest sea water's
-top face half a texture pixel over them; the same breaker, once it crashes, runs up it (in 1/32-block steps, judged per texel so the
-edge is blocky) with a thick foam edge and scraps of foam riding along, then draws back with a broken edge, leaving the sand dark and
-wet out to where it reached, drying until the next one. Run-up is about 1.6 blocks calm, up to 3.2 in storms;
-farther in storms. Only blocks at sea level get sheets (not the step up behind them). Toggling it remeshes the world.
-`mcopt.shade.rays` (default true, "Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
+wave a random 0.7..1.3 in size) a crest rolls in from 5 blocks out, growing as it comes and breaking into foam inside ~3 blocks;
+the shallows draw back just before it lands, then the water by the beach heaves up flush with the shore's top. Foam: a band along the
+shore (full at the waterline, gone 2.5 blocks out) that swells as each breaker lands and drains as it draws back, the breaking crest,
+and whitecaps on the tallest swell in rain and storms; drawn as plain white texel-sized cells (16 a block) covering about the share
+of the surface the foam level asks for, churning as each cell rerolls about every 0.7 s. (Until this fix own_fs never saw the water
+varyings: mcown.m gives the fragment stage no TRANSLUCENT constant, so F_WATER now also follows the cutout-at-0.1 variant.) Swash (sheets of water running up the beach, ShadeWater.SHEETS) is switched off for now: the spill didn't read in game
+and is to be redone another way; terrain.metal still has the sheet code. Toggling it remeshes the world.
+`mcopt.shade.rays` (currently switched off in code, and the option hidden: the shafts weren't reading in game) ("Forest god rays"): in a forest, taiga or jungle, ShadeRays looks for canopy gaps around the
 camera from the heightmaps (open to the sky to the ground, roofed by leaves 3 blocks away on most sides), keeps the 12 nearest
 (4 blocks apart) and the composite adds a soft warm glow along a shaft from each gap down to the ground along the sunlight,
 brighter toward the sun. Only while the sun is low but up (morning, late afternoon), not in rain.

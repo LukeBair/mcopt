@@ -33,6 +33,8 @@ public final class ShadeWater {
 	public static final int FRAME_BYTES = 16;
 	/** How far up the beach swash sheets are laid, blocks. */
 	private static final int SWASH = 3;
+	/** Swash sheets are laid (switched off for now: the spill over the beach didn't read in game; to be redone another way). */
+	private static final boolean SHEETS = false;
 
 	private ShadeWater() {
 	}
@@ -151,6 +153,7 @@ public final class ShadeWater {
 	 * texture, tint, light) moved onto this block's top. Called on the meshing threads for every non-fluid block.
 	 */
 	public static void swash(BlockAndTintGetter level, BlockPos pos, BlockState state, FluidRenderer fluids, FluidRenderer.Output out) {
+		if (!SHEETS) return;
 		ClientLevel cl = Minecraft.getInstance().level;
 		if (cl == null || pos.getY() != cl.getSeaLevel() - 1) return;
 		if (!level.getBlockState(pos.above()).isAir() || !state.isFaceSturdy(level, pos, Direction.UP)) return;

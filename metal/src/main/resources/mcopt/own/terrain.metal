@@ -1607,8 +1607,12 @@ constant bool F_ORACLE_SET [[function_constant(17)]];
 constant bool F_ORACLE = is_function_constant_defined(F_ORACLE_SET) && F_ORACLE_SET;
 
 constant bool TRANSLUCENT [[function_constant(4)]];
-// mcopt shaders: tagged sea water's varyings (ShadeWater), translucent only
-constant bool F_WATER = TRANSLUCENT && F_VARY;
+constant bool CUTOUT [[function_constant(0)]];
+constant float CUTOUT_LIMIT [[function_constant(5)]];  // vanilla's ALPHA_CUTOUT: 0.5 cutout, 0.1 translucent
+// mcopt shaders: tagged sea water's varyings (ShadeWater), translucent only. Only the vertex stage is given TRANSLUCENT (mcown.m sets
+// constant 4 there); the fragment stage's translucent variant is the cutout one at vanilla's 0.1 limit, so it goes by that.
+constant bool F_WATER = (is_function_constant_defined(TRANSLUCENT) ? TRANSLUCENT
+	: is_function_constant_defined(CUTOUT_LIMIT) && CUTOUT && CUTOUT_LIMIT < 0.2) && F_VARY;
 
 struct VOut {
 	float4 pos [[position]];
@@ -1995,19 +1999,14 @@ static VOut ownVertex(uint vi, int3 origin, int uploadMs, constant DrawFrame &df
 			float draw = smoothstep(BREAK_CRASH - 0.18, BREAK_CRASH - 0.05, u) * (1.0 - smoothstep(BREAK_CRASH - 0.05, BREAK_CRASH, u)) * edge;
 			float lift = h * df.wave.x * (1.0 + 0.5 * sh) + (crest * (2.0 + 0.5 * amp32) * size + crash * 3.5 * size - draw * 2.0) / 32.0;
 			float yOff = round(min(lift * q, 3.5 / 32.0) * 32.0) / 32.0;
-			// at the shoreline (corners touching land) the water rises to the swash sheet's height (half a pixel over the beach's
-			// top) while the breaker is up the beach, so the sea runs straight onto the sheet with no step of sand between them
-			float r = breakerReach(u);
-			if (k < 0.5 && q > 0.0) yOff = max(yOff, (1.0 + 1.0 / 32.0 - 0.8889) * smoothstep(0.0, 0.15, r));
 			if (abs(fract(float(v.pos.y)) - 0.8889) >= 0.03) yOff = 0.0;
-			// foam cover: a thin line along the shore; on the crest once it breaks (inside ~3 blocks) and trailing seaward behind it; a
-			// burst over the shore blocks as it crashes, boiling away as it draws back; crests breaking in the shallows; more in storms
+			// foam level 0..1 (own_fs covers about that share of the surface): a band along the shore (full at the waterline, gone 2.5
+			// blocks out) that swells as each breaker lands and drains as it draws back; the breaking crest as it rolls in; whitecaps on
+			// the tallest swell in rain and storms
 			float breaking = smoothstep(-3.5, -1.0, sc);
-			float trail = -k < sc ? exp(-(sc + k) / 1.5) * breaking * (1.0 - smoothstep(BREAK_CRASH, BREAK_CRASH + 0.1, u)) : 0.0;
-			float boil = u > BREAK_CRASH ? saturate(1.0 - (u - BREAK_CRASH) / 0.45) * edge : 0.0;
-			float foam = 0.6 * saturate(1.0 - k / 1.5) + 0.5 * r * edge + (crest * breaking * 1.2 + trail * 0.8 + crash * 1.4 + boil * 0.7) * size
-				+ sh / 3.0 * smoothstep(0.3, 0.8, h) * 0.4;
-			foam *= 0.8 + 0.2 * df.wave.y;
+			float landed = u > BREAK_CRASH ? exp(-(u - BREAK_CRASH) * 4.0) : 0.0;
+			float foam = saturate(1.0 - k / 2.5) * (0.55 + 0.45 * landed * size) + crest * breaking * 0.9
+				+ smoothstep(0.7, 1.0, h) * saturate(df.wave.y - 1.0) * 0.6;
 			return ownShade(v, origin, uploadMs, df, proj, g, t, lightmap, lightSampler, rel, yOff,
 				float4(xz, foam * min(q * 2.0, 1.0), (h + 1.5 * crest * size + crash) * q));
 		}
@@ -2411,9 +2410,6 @@ static float linear_fog_value(float vertexDistance, float fogStart, float fogEnd
 	return (vertexDistance - fogStart) / (fogEnd - fogStart);
 }
 
-constant bool CUTOUT [[function_constant(0)]];
-constant float CUTOUT_LIMIT [[function_constant(5)]];  // vanilla's ALPHA_CUTOUT: 0.5 cutout, 0.1 translucent
-
 // mcopt shaders: foam's colour: plain white, unlit, so it reads at any time of day
 #define SEA_FOAM float3(0.97, 0.98, 1.0)
 
@@ -2424,9 +2420,8 @@ static float seaHash(float2 p) {
 	return fract((p3.x + p3.y) * p3.z);
 }
 
-// mcopt shaders: tagged sea water's look. Crests a touch lighter and troughs darker, and blocky foam where the vertex stage asks for
-// it (shore blocks, breaking crests in the shallows): texel-sized cells (16 a block) of drifting value noise, thicker the higher the
-// foam level, plain white (SEA_FOAM).
+// mcopt shaders: tagged sea water's look. Crests lighter and troughs darker, and blocky white foam (SEA_FOAM) covering about the
+// share of the surface the vertex stage's foam level asks for (the shore band, breaking crests, storm whitecaps).
 // A swash sheet (water.z -1 - its distance up the beach, blocks; water.w a full run-up there): the breaker's water out to how far it
 // has run (breakerReach), in 1/32-block steps judged at each texel's centre so its edge is blocky, with a ragged line of foam along
 // the edge (thick as it surges in, broken as it draws back) and scraps of foam riding with it; behind the receding water the sand
@@ -2476,16 +2471,14 @@ static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
 	if (in.water.z <= 0.0 && in.water.w == 0.0) return color;
 	color.rgb *= 1.0 + 0.15 * clamp(in.water.w, -1.0, 2.0);
 	if (in.water.z > 0.0) {
+		// foam: a cell per texture pixel (16 a block), each with a random value it rerolls about every 0.7 s (staggered, so the foam
+		// churns); the cell is foam where its value is under the foam level, with a paler fringe just above it
 		float T = g.GameTime * 1200.0;
 		float2 cell = floor(in.water.xy * 16.0);
-		float2 q = cell / 6.0 + float2(T * 0.35, T * 0.2);
-		float2 i = floor(q), f = fract(q);
-		f = f * f * (3.0 - 2.0 * f);
-		float n = mix(mix(seaHash(i), seaHash(i + float2(1, 0)), f.x), mix(seaHash(i + float2(0, 1)), seaHash(i + float2(1, 1)), f.x), f.y);
-		n = n * 0.75 + 0.25 * seaHash(cell + floor(T * 1.5));
-		if (n > 0.92 - 0.8 * min(in.water.z, 1.0)) {
-			color = float4(SEA_FOAM, max(color.a, 0.95));
-		}
+		float n = seaHash(cell + 37.0 * floor(T * 1.5 + seaHash(cell + 11.0)));
+		float level = min(in.water.z, 1.0);
+		if (n < level) return float4(SEA_FOAM, max(color.a, 0.95));
+		if (n < level + 0.12) return float4(mix(color.rgb, SEA_FOAM, 0.45), max(color.a, 0.85));
 	}
 	return color;
 }

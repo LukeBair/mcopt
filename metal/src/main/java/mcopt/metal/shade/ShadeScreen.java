@@ -64,11 +64,8 @@ public final class ShadeScreen extends OptionsSubScreen {
 				Shade.CLOUDS, v -> Shade.CLOUDS = v),
 			slider("Render scale", "The world's resolution as a share of the window's (the HUD stays sharp). Lower is faster and cooler, softer.",
 				0.5, 1, RenderScale.SCALE, Shade::pct, v -> RenderScale.SCALE = RenderScale.clamp((float) v)),
-			OptionInstance.createBoolean("Forest god rays",
-				v -> Tooltip.create(Component.literal("Shafts of sunlight through gaps in the canopy, in the morning and late afternoon.")),
-				Shade.RAYS, v -> Shade.RAYS = v),
 			OptionInstance.createBoolean("Ocean waves",
-				v -> Tooltip.create(Component.literal("Blocky waves on the open sea, bigger in rain and storms, breaking in the shallows and running up the beach.")),
+				v -> Tooltip.create(Component.literal("Blocky waves on the open sea, bigger in rain and storms, breaking in the shallows and crashing on the shore.")),
 				Shade.WAVES, v -> {
 					Shade.WAVES = v;
 					Minecraft.getInstance().levelExtractor.allChanged();  // (the water's tags and swash sheets are made when it's meshed)
@@ -114,7 +111,6 @@ public final class ShadeScreen extends OptionsSubScreen {
 		values.put("mcopt.shade.soft", Boolean.toString(Shade.SOFT));
 		values.put("mcopt.shade.clouds", Boolean.toString(Shade.CLOUDS));
 		values.put("mcopt.shade.waves", Boolean.toString(Shade.WAVES));
-		values.put("mcopt.shade.rays", Boolean.toString(Shade.RAYS));
 		values.put("mcopt.renderScale", Float.toString(RenderScale.SCALE));
 		values.put("mcopt.shade.cloudDist", num(Shade.CLOUD_DIST));
 		values.put("mcopt.shade.blockLight", num(Shade.BLOCK_LIGHT));
