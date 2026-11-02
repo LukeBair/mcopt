@@ -46,7 +46,7 @@ public final class ShadeSplash {
 		// the shader's clock (GameTime * 1200: seconds, wrapping each 24000-tick day) now and a tick ago
 		double t = (level.getGameTime() % 24000L) / 20.0;
 		int sea = level.getSeaLevel();
-		for (int[] s : shore) {
+		for (int[] s : Shade.WAVES ? shore : List.<int[]>of()) {
 			double px = (s[0] & 1023) + 0.5, pz = (s[1] & 1023) + 0.5;
 			double c = phase(px, pz, t), was = phase(px, pz, t - 0.05);
 			if (Math.floor(c - CRASH) == Math.floor(was - CRASH)) continue;
@@ -66,7 +66,7 @@ public final class ShadeSplash {
 			}
 			if (r.nextFloat() < 0.5f) level.addParticle(ParticleTypes.BUBBLE_POP, cx + r.nextGaussian() * 0.4, top, cz + r.nextGaussian() * 0.4, 0, 0, 0);
 		}
-		for (int[] f : falls) {
+		for (int[] f : Shade.FALLS ? falls : List.<int[]>of()) {
 			// (more and higher the farther it falls: f[3], 0..7)
 			double cx = f[0] + 0.5, top = f[1] + 0.95, cz = f[2] + 0.5, p = f[3] / 7.0;
 			int drops = 1 + (int) Math.round(3 * p);

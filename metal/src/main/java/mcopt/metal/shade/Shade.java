@@ -36,6 +36,8 @@ public final class Shade {
 	static boolean CLOUDS = Boolean.parseBoolean(System.getProperty("mcopt.shade.clouds", "true"));
 	/** Blocky ocean waves and shore foam (ShadeWater; whether water is tagged for them is decided when it's meshed). */
 	public static boolean WAVES = Boolean.parseBoolean(System.getProperty("mcopt.shade.waves", "true"));
+	/** Foam streaks, churn and splashes on waterfalls (ShadeWater.Fall, ShadeSplash; also decided when the water's meshed). */
+	public static boolean FALLS = Boolean.parseBoolean(System.getProperty("mcopt.shade.falls", "true"));
 	/** God rays through canopy gaps in forests (ShadeRays). */
 	static boolean RAYS = false;  // (switched off for now: the shafts weren't reading in game; mcopt.shade.rays is ignored)
 	/** How far the stylized clouds reach, blocks. */
@@ -152,6 +154,7 @@ public final class Shade {
 		SOFT = false;
 		CLOUDS = true;
 		WAVES = true;
+		FALLS = true;
 		RAYS = false;
 		CLOUD_DIST = 640f;
 		BLOCK_LIGHT = 0.6f;

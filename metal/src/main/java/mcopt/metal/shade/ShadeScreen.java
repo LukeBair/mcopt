@@ -70,6 +70,12 @@ public final class ShadeScreen extends OptionsSubScreen {
 					Shade.WAVES = v;
 					Minecraft.getInstance().levelExtractor.allChanged();  // (the water's tags and swash sheets are made when it's meshed)
 				}),
+			OptionInstance.createBoolean("Waterfalls",
+				v -> Tooltip.create(Component.literal("Foam streaking down falling water, thicker the farther it falls, churning white where it lands, with splashes and mist.")),
+				Shade.FALLS, v -> {
+					Shade.FALLS = v;
+					Minecraft.getInstance().levelExtractor.allChanged();  // (tagged when the water's meshed)
+				}),
 			slider("Cloud distance", "How far the stylized clouds reach, in blocks.", 128, 1536, Shade.CLOUD_DIST, Shade::blocks, v -> Shade.CLOUD_DIST = (float) v),
 			OptionInstance.createBoolean("Wide soft shadows",
 				v -> Tooltip.create(Component.literal("Wide, filtered shadow edges (a little grainy). Off: solid shadows with a slightly soft edge, and faster.")),
@@ -111,6 +117,7 @@ public final class ShadeScreen extends OptionsSubScreen {
 		values.put("mcopt.shade.soft", Boolean.toString(Shade.SOFT));
 		values.put("mcopt.shade.clouds", Boolean.toString(Shade.CLOUDS));
 		values.put("mcopt.shade.waves", Boolean.toString(Shade.WAVES));
+		values.put("mcopt.shade.falls", Boolean.toString(Shade.FALLS));
 		values.put("mcopt.renderScale", Float.toString(RenderScale.SCALE));
 		values.put("mcopt.shade.cloudDist", num(Shade.CLOUD_DIST));
 		values.put("mcopt.shade.blockLight", num(Shade.BLOCK_LIGHT));

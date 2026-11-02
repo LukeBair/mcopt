@@ -42,7 +42,7 @@ public final class ShadeWater {
 
 	/** Tagging is on: decided per chunk at meshing time. */
 	public static boolean tagging() {
-		return Shade.ON && Shade.WAVES;
+		return Shade.ON && (Shade.WAVES || Shade.FALLS);
 	}
 
 	/** How far out breakers are tracked (Sea.shore), blocks. */
@@ -163,9 +163,9 @@ public final class ShadeWater {
 	 */
 	public static Tag sea(BlockAndTintGetter level, BlockPos pos, FluidState fluid) {
 		if (!fluid.is(FluidTags.WATER)) return null;
-		Fall fall = fall(level, pos, fluid);
+		Fall fall = Shade.FALLS ? fall(level, pos, fluid) : null;
 		if (fall != null) return fall;
-		Sea sea = open(level, pos, fluid);
+		Sea sea = Shade.WAVES ? open(level, pos, fluid) : null;
 		if (sea != null) return sea;
 		// other water's surface (no fluid above): tagged so own_fs can ring it with raindrops
 		return level.getFluidState(pos.above()).isEmpty() ? SURFACE : null;
