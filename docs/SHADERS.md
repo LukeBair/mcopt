@@ -52,8 +52,9 @@ the shallows draw back just before it lands, then the water by the beach heaves 
 from the corner's shore distance (VOut.shore): the crest breaks into foam inside ~3.5 blocks with whitewater trailing behind it, a
 burst covers the first block or so as it lands, then the foam line slides back out to ~2.5 blocks as the water draws back, thinning
 and leaving lace shoreward of it, and fades on out as the next crest comes in; the waterline keeps a thin rim. The foam pattern rides
-the water (carried up to 1.5 blocks in and back out, a texel at a time). Plus whitecaps on the tallest swell in rain and storms. It is
-drawn as plain white texel cells (16 a block): patches from a clustered field, ragged and churning from each cell's own value, so
+the water (carried up to 1.5 blocks in and back out, a texel at a time). Plus whitecaps on the tallest swell in rain and storms, broken
+into drifting patches a few blocks across, each 3-block stretch flaring and dying at its own times. It is drawn as white texel
+cells (16 a block), lit by the lightmap as the water is (day, night, torches, dynamic lights): patches from a clustered field, ragged and churning from each cell's own value, so
 thin foam is scattered lace and thick foam nearly solid. (Until this fix own_fs never saw the water
 varyings: mcown.m gives the fragment stage no TRANSLUCENT constant, so F_WATER now also follows the cutout-at-0.1 variant.) Swash (sheets of water running up the beach, ShadeWater.SHEETS) is switched off for now: the spill didn't read in game
 and is to be redone another way; terrain.metal still has the sheet code. Toggling it remeshes the world.

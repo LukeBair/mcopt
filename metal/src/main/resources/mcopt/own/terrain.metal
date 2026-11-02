@@ -1618,6 +1618,7 @@ struct VOut {
 	float4 pos [[position]];
 	float4 water [[function_constant(F_WATER)]];  // world xz (mod 1024), foam level (swash: -1 - distance up the beach), wave height -1..1 (swash: reach; 0: untagged)
 	float2 shore [[function_constant(F_WATER)]];  // tagged sea: distance from the shore (blocks, 0..4: 4 or more), ocean share 0..1; else 0
+	float3 light [[function_constant(F_WATER)]];  // the lightmap's colour at the vertex (sky and block light, time of day): the foam's light
 	float sphericalVertexDistance [[function_constant(F_VARY)]];
 	float cylindricalVertexDistance [[function_constant(F_RICH)]];
 	float4 vertexColor [[function_constant(F_FLOATCOLOR)]];
@@ -2047,7 +2048,9 @@ static VOut ownShade(Vtx v, int3 origin, int uploadMs, constant DrawFrame &df, c
 	}
 	o.sphericalVertexDistance = length(pos);
 	float2 luv = clamp(float2(int2(v.uv2)) / 256.0 + 0.5 / 16.0, float2(0.5 / 16.0), float2(15.5 / 16.0));
-	putColor(o, VS_MODE == 1 ? float4(v.color) / 255.0 : float4(v.color) / 255.0 * lightmap.sample(lightSampler, luv, level(0.0)));
+	float4 lm = VS_MODE == 1 ? float4(1.0) : lightmap.sample(lightSampler, luv, level(0.0));
+	putColor(o, float4(v.color) / 255.0 * lm);
+	if (F_WATER) o.light = lm.rgb;
 	o.texCoord0 = float2(v.uv0);
 #ifdef OWN_TPROBE
 	if (TRANSLUCENT && OWN_TPROBE == 5) {
@@ -2410,7 +2413,7 @@ static float linear_fog_value(float vertexDistance, float fogStart, float fogEnd
 	return (vertexDistance - fogStart) / (fogEnd - fogStart);
 }
 
-// mcopt shaders: foam's colour: plain white, unlit, so it reads at any time of day
+// mcopt shaders: foam's colour, lit by the lightmap as the water is (VOut.light: day, night, torches, dynamic lights)
 #define SEA_FOAM float3(0.97, 0.98, 1.0)
 
 // mcopt shaders: a value-noise hash for the foam
@@ -2451,7 +2454,7 @@ static float4 swashSheet(float4 color, VOut in, constant Globals &g) {
 		if (dc > wetTo || wet < 0.02) discard_fragment();
 		return float4(0.0, 0.0, 0.0, wet);
 	}
-	float4 white = float4(SEA_FOAM, 0.95);
+	float4 white = float4(SEA_FOAM * in.light, 0.95);
 	bool surging = u < BREAK_CRASH + (1.0 - BREAK_CRASH) * 0.22;
 	float band = surging ? 0.3 : 0.1 + 0.15 * r;
 	if (reach - dc < band && (surging || seaHash(cell + 17.0) > 0.35)) return white;
@@ -2503,7 +2506,16 @@ static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
 	color.rgb *= 1.0 + 0.15 * clamp(in.water.w, -1.0, 2.0);
 	float T = g.GameTime * 1200.0;
 	float2 p = in.water.xy;
-	float level = in.water.z;
+	float level = 0.0;
+	if (in.water.z > 0.0) {
+		// storm whitecaps (in.water.z on the swell's crests), broken up: only in patches of sea a few blocks across that drift with
+		// the wind, each 3-block stretch flaring and dying at its own times; judged per texel so the edges stay blocky
+		float2 pc = (floor(p * 16.0) + 0.5) / 16.0;
+		float patch = smoothstep(0.45, 0.8, seaCluster(pc / 5.0 + float2(T * 0.08, T * 0.05), 1.0));
+		float2 r = floor(pc / 3.0);
+		float gate = step(0.4, seaHash(r + 17.0 * floor(T / 2.5 + seaHash(r + 5.0))));
+		level = in.water.z * patch * gate * 1.5;
+	}
 	float2 drift = float2(0.0);
 	if (in.shore.y > 0.0 && in.shore.x < 3.99) {
 		float n;
@@ -2527,8 +2539,9 @@ static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
 		float churn = seaHash(cell + 37.0 * floor(T * 1.5 + seaHash(cell + 11.0)));
 		float nz = 0.7 * seaCluster(cell, 3.0) + 0.3 * churn;
 		float l = min(level, 1.0) * 0.95;
-		if (nz < l) return float4(SEA_FOAM, max(color.a, 0.95));
-		if (nz < l + 0.08) return float4(mix(color.rgb, SEA_FOAM, 0.45), max(color.a, 0.85));
+		float3 foam = SEA_FOAM * in.light;
+		if (nz < l) return float4(foam, max(color.a, 0.95));
+		if (nz < l + 0.08) return float4(mix(color.rgb, foam, 0.45), max(color.a, 0.85));
 	}
 	return color;
 }
