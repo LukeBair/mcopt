@@ -90,6 +90,7 @@ struct DrawFrame {
 	int clipOnCpu;        // 1: clip below is ProjMat * ModelViewMat, multiplied once on the CPU (-Dmcopt.own.cpuClip)
 	float4x4 clip;
 	float4 wave;          // mcopt shaders (ShadeWater): x wave amplitude (blocks, 0: flat), y foam strength, z tags present (1/0)
+	float4 hit[16];       // mcopt shaders (ShadeImpact): things that hit the water, newest first: world xz (mod 1024), age (seconds), strength 0..1 (0: none, the rest empty)
 };
 
 // vanilla's std140 uniform blocks
@@ -2602,9 +2603,13 @@ static float4 fallSurface(float4 color, VOut in, constant Globals &g) {
 // mcopt shaders: raindrops on the water's surface (rain 0..1 how hard it hits here; p world xz): a blocky ring for each drop, a
 // texel wide, spreading to about half a block across and fading over its life; on each half-block cell of two offset grids a drop
 // lands at its own times (more of them the harder it rains). Top faces only (sides' xz have no area on screen).
-static float4 rainRipples(float4 color, float2 p, float rain, float3 light, float T) {
+static bool topFace(float2 p) {
 	float2 px = dfdx(p), py = dfdy(p);
-	if (abs(px.x * py.y - px.y * py.x) < 0.05 * length(px) * length(py)) return color;
+	return abs(px.x * py.y - px.y * py.x) >= 0.05 * length(px) * length(py);
+}
+
+static float4 rainRipples(float4 color, float2 p, float rain, float3 light, float T) {
+	if (!topFace(p)) return color;
 	float2 tc = (floor(p * 16.0) + 0.5) / 16.0;
 	float ring = 0.0;
 	for (int k = 0; k < 2; k++) {
@@ -2617,7 +2622,46 @@ static float4 rainRipples(float4 color, float2 p, float rain, float3 light, floa
 		float d = length(q - c), r = 0.06 + a * 0.85;
 		if (abs(d - r) < 0.09) ring = max(ring, 1.0 - a);
 	}
-	return ring > 0.12 ? float4(mix(color.rgb, SEA_FOAM * light, 0.25 + 0.35 * ring), color.a) : color;
+	return ring > 0.12 ? float4(mix(color.rgb, SEA_FOAM * light, (0.25 + 0.35 * ring) * 0.7), color.a) : color;
+}
+
+// mcopt shaders: things that hit the water (ShadeImpact; hit: xz, age in seconds, strength 0..1). For each, 1 to 3 blocky rings
+// (like the raindrops', a texel wide) spread out from the point, a little apart, up to 1 to 5 blocks across and fading as they go,
+// and a burst of foam at the centre in the first moments. It all lasts 1.4 to 3.2 seconds, the longer and bigger the stronger.
+static float4 impactRipples(float4 color, float2 p, float3 light, constant DrawFrame &df) {
+	if (df.hit[0].w <= 0.0 || !topFace(p)) return color;
+	float2 tc = (floor(p * 16.0) + 0.5) / 16.0;
+	float ring = 0.0, foam = 0.0;
+	for (int i = 0; i < 16; i++) {
+		float4 h = df.hit[i];
+		if (h.w <= 0.0) break;
+		float2 d = tc - h.xy;
+		d -= 1024.0 * round(d / 1024.0);
+		float s = h.w, life = 1.4 + 1.8 * s, reach = 1.0 + 4.0 * s;
+		float dist = length(d);
+		if (h.z >= life || dist > reach + 0.5) continue;
+		int rings = 1 + int(round(2.0 * s));
+		for (int k = 0; k < 3; k++) {
+			if (k >= rings) break;
+			float u = (h.z - 0.2 * float(k)) / (life - 0.4);
+			if (u <= 0.0 || u >= 1.0) continue;
+			float r = (0.2 + reach * (1.0 - (1.0 - u) * (1.0 - u))) * (1.0 - 0.15 * float(k));
+			if (abs(dist - r) < 0.07 + 0.04 * s) ring = max(ring, (1.0 - u) * (0.55 + 0.45 * s));
+		}
+		// (the burst: churning foam on a disc that shrinks away, solid at its heart)
+		float fl = 0.25 + 0.75 * s, fa = h.z / (0.3 + 0.5 * s);
+		if (fa < 1.0) {
+			float fr = (0.25 + 0.7 * s) * (0.6 + 0.4 * fa);
+			if (dist < fr) {
+				float2 cell = floor(p * 16.0);
+				float churn = seaHash(cell + 37.0 * floor(h.z * 12.0 + seaHash(cell + 11.0)));
+				if (churn < (1.0 - fa) * (1.2 - 0.5 * dist / fr) * fl) foam = 1.0;
+			}
+		}
+	}
+	float3 white = SEA_FOAM * light;
+	if (foam > 0.0) return float4(white, max(color.a, 0.95));
+	return ring > 0.12 ? float4(mix(color.rgb, white, 0.25 + 0.4 * ring), color.a) : color;
 }
 
 static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
@@ -2668,7 +2712,7 @@ static float4 seaSurface(float4 color, VOut in, constant Globals &g) {
 	return color;
 }
 
-fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(22)]], constant Terrain &t [[buffer(23)]], constant Fog &fog [[buffer(24)]],
+fragment float4 own_fs(VOut in [[stage_in]], constant DrawFrame &df [[buffer(20)]], constant Globals &g [[buffer(22)]], constant Terrain &t [[buffer(23)]], constant Fog &fog [[buffer(24)]],
 	texture2d<float> atlas [[texture(16)]], sampler atlasSampler [[sampler(14)]]) {
 #ifdef OWN_TPROBE
 	// (probes 1 and 3: the translucent fragment stage returns a constant, blending kept; translucent = cutout at limit 0.1)
@@ -2685,7 +2729,9 @@ fragment float4 own_fs(VOut in [[stage_in]], constant Globals &g [[buffer(22)]],
 	if (F_WATER) {
 		color = seaSurface(color, in, g);
 		// (rain on the water's surface; not on a waterfall's falling column, whose x, y are along it and up)
-		if (in.light.w > 0.0 && (in.water.z > -9.5 || in.water.z < -39.5)) color = rainRipples(color, in.water.xy, in.light.w, in.light.rgb, g.GameTime * 1200.0);
+		bool open = in.water.z > -9.5 || in.water.z < -39.5;
+		if (open && in.light.w > 0.0) color = rainRipples(color, in.water.xy, in.light.w, in.light.rgb, g.GameTime * 1200.0);
+		if (open) color = impactRipples(color, in.water.xy, in.light.rgb, df);
 	}
 	// F_LEAN: the chunk visibility is 1 (mix(x, y, 1) is y), the render-distance fog value 0 (max(e, 0) is e for e >= 0)
 	if (F_RICH) color = mix(fog.FogColor * float4(1, 1, 1, color.a), color, in.chunkVisibility);

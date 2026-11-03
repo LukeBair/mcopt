@@ -746,7 +746,7 @@ int mco_draw(Own *w, Enc *enc, int cutout, const void *frame, int frameLength, i
 		pso = ownPipeline(w, enc, cutout, err, errCap);
 	}
 	if (vgElig) w->vgStat[!vgArgs ? 5 : vgArgs == w->a1sGBuf && w->a1sGOut == (void *) args ? 4 : (id) args == w->uoccBArgs ? 3 : 2]++;
-	uint8_t fbuf[256];
+	uint8_t fbuf[512];
 	if (!pso && (cutout & (1 << 12))) {
 		// (a table draw without its F_QFLAT pipeline: the list's class draw instead, never the table under a plain vertex stage)
 		cutout &= ~(1 << 12);
@@ -767,6 +767,7 @@ int mco_draw(Own *w, Enc *enc, int cutout, const void *frame, int frameLength, i
 		[r setDepthBias:bias ? 1.0f : 0 slopeScale:0 clamp:0];
 		if (mesh) [r setMeshBytes:frame length:frameLength atIndex:20];
 		else [r setVertexBytes:frame length:frameLength atIndex:20];
+		[r setFragmentBytes:frame length:frameLength atIndex:20];  // (own_fs: DrawFrame.hit)
 		if (mesh && (cutout & (3 << 27))) ownBindOcc(w, r, cutout);
 		goto drawCall;
 	}
@@ -796,6 +797,7 @@ int mco_draw(Own *w, Enc *enc, int cutout, const void *frame, int frameLength, i
 		}
 	}
 	[r setVertexBytes:frame length:frameLength atIndex:20];
+	[r setFragmentBytes:frame length:frameLength atIndex:20];
 	[r setVertexBuffer:arena offset:0 atIndex:16];
 	[r setVertexBuffer:sections offset:0 atIndex:17];
 	[r setVertexBuffer:recs offset:0 atIndex:18];

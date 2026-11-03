@@ -31,7 +31,7 @@ import org.lwjgl.system.MemoryUtil;
  */
 public final class ShadeWater {
 	/** Bytes this adds to the terrain's DrawFrame (terrain.metal: float4 wave). */
-	public static final int FRAME_BYTES = 16;
+	public static final int FRAME_BYTES = 16 + ShadeImpact.BYTES;
 	/** How far up the beach swash sheets are laid, blocks. */
 	private static final int SWASH = 3;
 	/** Swash sheets are laid (switched off for now: the spill over the beach didn't read in game; to be redone another way). */
@@ -400,6 +400,7 @@ public final class ShadeWater {
 		ClientLevel level = Minecraft.getInstance().level;
 		MemoryUtil.memSet(d, 0, FRAME_BYTES);
 		if (!tagging()) return;
+		ShadeImpact.put(d + 16);
 		MemoryUtil.memPutFloat(d + 8, 1f);  // (tags are decoded, the alpha restored, even while the waves are flat)
 		if (!Shade.enabled || level == null) return;
 		float rain = level.getRainLevel(1f), thunder = level.getThunderLevel(1f);
