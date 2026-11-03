@@ -39,7 +39,7 @@ import org.lwjgl.system.MemoryStack;
  */
 public final class ShadePass {
 	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4()
-		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().get();
+		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().get();
 	private static final int LIGHTS_SIZE = (ShadeLights.MAX * 2 + ShadeRays.MAX * 2 + 32) * 16;
 	private static RenderPipeline occ;
 	private static RenderPipeline shade;
@@ -187,6 +187,7 @@ public final class ShadePass {
 		float tr = lerp(0.84f, lerp(1f, 1.0f, warm), sunW), tg = lerp(0.89f, lerp(1f, lerp(0.74f, vp[1] / vp[0], vivid), warm), sunW), tb = lerp(1f, lerp(1f, lerp(0.50f, vp[2] / vp[0], vivid), warm), sunW);
 		float rain0 = rain;
 		float tint = !sunny ? 0f : Shade.LIGHT * lerp(0.4f, 1f, sunW) * (1f - rain);
+		Vector3f sunTrue = new Vector3f(sun);
 		if (elev < -0.05f) sun.negate();  // the moon's direction at night
 		camera.viewRotationMatrix.transformDirection(sun);
 
@@ -276,6 +277,7 @@ public final class ShadePass {
 				.putVec4((float) floorMod(camera.pos.x, 4096), (float) floorMod(camera.pos.z, 4096), (level.gameTime % 72000L + level.worldPartialTicks) / 20f, 0f)
 				.putVec4(mapOn ? 1f : 0f, mapOn ? sm.size() : 0f, mapOn ? sm.cell() : 1f, storms != null ? 1f : 0f)
 				.putVec4((float) kx, (float) kz, storms != null ? storms.count() : 0f, 0f)
+				.putVec4(sunTrue.x, sunTrue.y, sunTrue.z, elev)
 				.get();
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), data);
 		}

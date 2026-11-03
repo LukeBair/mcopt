@@ -31,7 +31,7 @@ around), b type (a slow random field: flat stratus regions, ordinary cumulus, to
 2-block steps, so they stay blocky; the shading uses the density blended between cells, so tones don't step per cell. Coverage is
 optical depth (path through the columns times density): grazing edges are see-through, thick cores opaque. Light follows the time of
 day (warm and rosy at dawn and dusk, rim highlights, silver lining toward the sun). Rain thickens and lowers them, spreads coverage,
-greys them and drops the sun highlights. They cast soft shadows on sunlit terrain (gone in rain, when the sky's all overcast).
+greys them and drops the sun highlights. With the sun low (ShadeInfo.SunT, the true sun even just below the horizon) the light is the sun's through the air at the cloud's height (orange, red, gone; cirrus and storm tops keep it longest), shadowed by three probes toward the sun so edges glow and far sides darken, with a Henyey-Greenstein rim looking toward it and the sky's colour in the shade; this costs nothing with the sun high or long down. They cast soft shadows on sunlit terrain (gone in rain, when the sky's all overcast).
 `mcopt.shade.cloudDist` (default 640, "Cloud distance") is how far they reach. About 3.5% of sunrises and sunsets are vivid (a hashed
 roll per event, steady for its length), each with one palette picked by the same roll (ShadePass.VIVID: fiery, pink and magenta,
 golden hour, violet twilight, smoky red): its light on the terrain and the clouds' lit sides, its colour in their shaded undersides,

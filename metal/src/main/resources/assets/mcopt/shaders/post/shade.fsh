@@ -38,6 +38,7 @@ layout(std140) uniform ShadeInfo {
     vec4 SkyC;     // xy the camera's world x, z (wrapped at 4096), z seconds (wrapping hourly)
     vec4 SkyD;     // x sky map on, y its cells per side, z cell size (blocks), w storm list on
     vec4 SkyE;     // xy camera - map origin - wind drift (blocks), z storm count, w unused
+    vec4 SunT;     // xyz the true sun direction in world space (not negated at night), w its elevation (sin)
 };
 
 // The light-emitting blocks nearest the camera (ShadeLights): view-space centre and emission 0..1, and hue.
@@ -159,8 +160,10 @@ float thick(vec4 sky) {
     return max(CloudX.x, max(sky.x - 1.0, sky.y));
 }
 
+// A rain deck is deep everywhere, not only over the map's dense hearts: thickness also sets a floor under the density.
 float rainDensity(float g, vec4 sky) {
-    return min(1.0, g + 0.3 * thick(sky));
+    float t = thick(sky);
+    return min(1.0, max(g + 0.3 * t, 0.8 * t));
 }
 
 // Cover under 1 keeps only the denser hearts of the map's clouds (fewer, smaller cumulus); over 1 fills in around them.
@@ -272,7 +275,30 @@ void cloudColumn(float g, float type, out float top, out float bot) {
     float base = CloudP.y;
     float hs = mix(0.3, 1.9, type);
     top = base + 4.0 + floor(g * 9.0 * hs) * 2.0;
-    bot = base - floor(g * 3.0 * mix(0.5, 1.5, type) + 2.0 * CloudX.x) * 2.0;
+    bot = base - floor(g * 3.0 * mix(0.5, 1.5, type) + 2.0 * CloudX.x + 4.0 * max(g - 0.6, 0.0)) * 2.0;
+}
+
+// How low the true sun is: 1 around the horizon, 0 once it is high (or long down), so the dusk work costs nothing then.
+float duskK() {
+    return (1.0 - smoothstep(0.1, 0.4, SunT.w)) * smoothstep(-0.3, -0.12, SunT.w);
+}
+
+// The direct sunlight reaching height y: the sun's light through the air, orange then red then gone as it sinks (the longer path
+// takes the blue first), and higher up the sun sets later (a fudge for the earth's curve), so cirrus and storm tops stay lit
+// after the low cumulus have gone grey. A vivid one (CloudX.y) takes its palette's light.
+vec3 sunlightAt(float y) {
+    float e = SunT.w + 0.0006 * max(y - CloudP.y, 0.0);
+    float air = min(1.0 / (max(e, 0.0) + 0.05), 20.0);
+    float up = smoothstep(-0.07, 0.02, e);
+    vec3 t = exp(-vec3(0.06, 0.16, 0.42) * air) * up;
+    return mix(t * 1.15, VividL.rgb * up * clamp(t.r * 1.6, 0.0, 1.0), CloudX.y);
+}
+
+// Light scattered by a cloud toward the viewer, cs the cosine to the sun: a strong forward lobe and a weak back one (Henyey-Greenstein,
+// g 0.6 and -0.15), scaled to 0.7 looking straight into the sun.
+float phaseHG(float cs) {
+    float f = 0.64 / pow(1.36 - 1.2 * cs, 1.5), b = 0.9775 / pow(1.0225 + 0.3 * cs, 1.5);
+    return (0.7 * f + 0.3 * b) * 0.1;
 }
 
 // The colour of a cloud face at h: vanilla's face tones, darker low down and in thick clouds, with the light of the time of day.
@@ -310,7 +336,38 @@ vec3 cloudShade(vec3 h, vec3 d, vec3 sunW, bool side, int axis, vec2 stepv, floa
     if (storm) amb *= mix(0.55, 1.05, hf);
     light *= 1.0 - 0.8 * wet;
     behind *= 1.0 - wet;
-    vec3 col = CloudCol.rgb * (amb * mix(vec3(1.0), mix(vec3(1.0, 0.8, 0.78), VividS.rgb, viv), low * 0.6) * mix(1.0, mix(0.45, 0.75, hf), wet) + light + sunC * behind);
+    vec3 am = amb * mix(vec3(1.0), mix(vec3(1.0, 0.8, 0.78), VividS.rgb, viv), low * 0.6) * mix(1.0, mix(0.45, 0.75, hf), wet);
+    vec3 col = CloudCol.rgb * (am + light + sunC * behind);
+    // Sunrise and sunset: the true sun's light at this height, shadowed by the cloud between it and the face, with scattered
+    // light at the rims and the sky's colour in the shade. Only when the sun is low.
+    float dk = duskK();
+    if (dk > 0.001) {
+        vec3 sd = SunT.xyz, sl = sunlightAt(h.y);
+        // Three probes toward the sun (8, 20 and 40 blocks out, rising with it) add up the cloud in the way.
+        vec2 hz = sd.xz / max(length(sd.xz), 1e-3);
+        float rise = clamp(sd.y / max(length(sd.xz), 1e-3), -4.0, 4.0), od = 0.0;
+        for (int i = 0; i < 3; i++) {
+            float s = i == 0 ? 8.0 : (i == 1 ? 20.0 : 40.0), seg = i == 0 ? 10.0 : (i == 1 ? 14.0 : 24.0);
+            vec2 pxz = h.xz + hz * s;
+            float py = h.y + rise * s;
+            vec4 pm = cloudMapAt(pxz);
+            if (!cloudCovered(pm, sk)) continue;
+            float pg = rainDensity(pm.g, sk);
+            float pt = CloudP.y + 4.0 + pg * 18.0 * mix(0.3, 1.9, pm.b), pb = CloudP.y - pg * 6.0 * mix(0.5, 1.5, pm.b) - 4.0 * CloudX.x;
+            od += pg * seg * 0.08 * smoothstep(pb - 1.0, pb + 3.0, py) * (1.0 - smoothstep(pt - 3.0, pt + 1.0, py));
+        }
+        float tr = exp(-od);
+        float lam = clamp(dot(n, sd) * 0.75 + 0.25, 0.0, 1.0);
+        // (thin edges facing away from the sun darken a little)
+        float powder = mix(1.0, mix(0.8, 1.0, 1.0 - exp(-2.0 * g)), 1.0 - lam);
+        vec3 alb = max(CloudCol.rgb, vec3(0.55));
+        float dry = 1.0 - 0.8 * wet;
+        vec3 dir = sl * alb * (lam * tr * powder * 0.95) * dry;
+        vec3 rimL = sl * (phaseHG(dot(d, sd)) * 1.6 * (1.0 - g) * tr * (1.0 - wet));
+        // The shade picks up the sky's colour, so dusk clouds aren't flat grey where the sun doesn't reach.
+        vec3 ambD = mix(CloudCol.rgb * am, sky * am, 0.25);
+        col = mix(col, ambD + dir + rimL, dk);
+    }
     // A little haze toward the sky with distance, so far clouds sit in the air rather than on it.
     return mix(col, sky, smoothstep(0.0, CloudP.z, tin) * 0.35);
 }
@@ -351,6 +408,14 @@ vec4 highClouds(vec3 d, vec3 sunW) {
     vec3 c = CloudCol.rgb * 1.05;
     c = mix(c, dusk * max(CloudCol.rgb, vec3(0.65)), low * 0.8);
     c += vec3(pow(max(dot(d, sunW), 0.0), 8.0) * 0.35 * max(day, low));
+    // Sunrise and sunset: the light up there (it lasts longest at this height), forward-scattered toward the sun.
+    float dk = duskK();
+    if (dk > 0.001) {
+        vec3 sl = sunlightAt(CloudP.y + 190.0);
+        vec3 cD = mix(CloudCol.rgb * 1.05, max(CloudCol.rgb, vec3(0.65)) * sl * 1.1, clamp(sl.r, 0.0, 1.0) * 0.85);
+        cD += sl * phaseHG(dot(d, SunT.xyz)) * 0.5;
+        c = mix(c, cD, dk);
+    }
     return vec4(c * (1.0 - 0.45 * CloudX.x), a);
 }
 
@@ -424,7 +489,7 @@ vec4 clouds(vec3 dirV, float tLimit, vec3 sky) {
     float base = CloudP.y;
     float cells = CloudO.w;
     const float CELL = 12.0;
-    float yMin = base - 14.0, yMax = base + ((SkyD.w > 0.5 ? SkyE.z > 0.0 : SkyA.y > 0.0) ? 136.0 : 40.0);
+    float yMin = base - 20.0, yMax = base + ((SkyD.w > 0.5 ? SkyE.z > 0.0 : SkyA.y > 0.0) ? 136.0 : 40.0);
     vec3 o = vec3(CloudO.x, CloudO.y, CloudO.z);
     // The slab the columns can occupy.
     float t0, t1;
