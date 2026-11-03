@@ -53,6 +53,14 @@ temperate, cold and coastal ones, more often within a day of rain, built up afte
 grey all day. `/weather cumulus|cumulonimbus|cirrus|cirrostratus|cloudless [duration]` holds a sky type, `/weather fog [duration]`
 brings in fog, and vanilla's clear/rain/thunder hand the sky back to the model (ShadeWeatherCommandMixin; single player). A weather mod
 can replace the model with `ShadeSky.setProvider` (it gets the model's answer as its starting point).
+ShadeSky API 2 (`ShadeSky.API`, static methods on primitives and arrays, for a weather mod): `takeOver(true)` stops the model and
+/weather's sky literals (not registered if it was on before the command tree was built; later ones reply that the weather mod handles
+the sky); `setMap(size, cellSize, originX, originZ, data)` puts cover, darkness, cirrus, veil, fog density and fog top on a
+world-space grid of up to 64x64 cells (6 floats per cell), uploaded to an RGBA8 texture and sampled bilinearly in the shader for the
+cumulus, the high layer, the halo, cloud shadows and, per third of the ray, the fog; `setWind(vx, vz)` drifts the cumulus with it
+(the high layer at 3x) and carries the map and storms along between calls; `setStorms(data, count)` places up to 16 cumulonimbus
+(centre, core radius, top, anvil radius and shift, stage 0..2 building, full, fading) in place of the hashed ones. `clearMap`,
+`clearWind` and `clearStorms` go back. With none of them set the sky is as before. docs: mcot-mods/docs/mcopt-shadesky-api.md.
 `mcopt.shade.blockLight` (default 0.6, "Light colours"): ShadeLights finds the 32 light-emitting blocks nearest the camera every 20
 frames, each with a hue (torch warm, soul fire and sea lanterns cool, redstone red, amethyst violet, else the block's map colour), and
 the composite shifts the colour of what they light toward it, where the sun isn't the main light. No occlusion: it's a tint.

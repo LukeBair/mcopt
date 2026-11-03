@@ -3,6 +3,7 @@ package mcopt.metal.shade;
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.buffers.Std140SizeCalculator;
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import com.mojang.blaze3d.resource.RenderTargetDescriptor;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -16,6 +17,7 @@ import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.pipeline.UniformType;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import java.nio.ByteBuffer;
 import java.util.Optional;
@@ -37,8 +39,8 @@ import org.lwjgl.system.MemoryStack;
  */
 public final class ShadePass {
 	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4()
-		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().get();
-	private static final int LIGHTS_SIZE = (ShadeLights.MAX * 2 + ShadeRays.MAX * 2) * 16;
+		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().get();
+	private static final int LIGHTS_SIZE = (ShadeLights.MAX * 2 + ShadeRays.MAX * 2 + 32) * 16;
 	private static RenderPipeline occ;
 	private static RenderPipeline shade;
 	private static RenderPipeline blit;
@@ -46,6 +48,12 @@ public final class ShadePass {
 	private static GpuBuffer lights;
 	private static boolean failed, logged;
 	private static int logFrames;
+	// The sky map's texture, the map it holds, and the wind's accumulated drift (blocks) of the cumulus and of the high layer.
+	private static GpuTexture skyTex;
+	private static GpuTextureView skyView;
+	private static ShadeSky.SkyMap skyUploaded;
+	private static int skySize;
+	private static double windT = Double.NaN, windDx, windDz, highDx, highDz;
 
 	private ShadePass() {
 	}
@@ -63,6 +71,7 @@ public final class ShadePass {
 			.withUniform("OccSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("HandSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("CloudSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+			.withUniform("SkyMapSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("ShadeLights", UniformType.UNIFORM_BUFFER)
 			.withUniform("ShadeInfo", UniformType.UNIFORM_BUFFER)
 			.build();
@@ -194,19 +203,53 @@ public final class ShadePass {
 		GpuTextureView cloudMap = ShadeClouds.active() ? ShadeClouds.view() : null;
 		int cells = ShadeClouds.size();
 		double period = cells * (double) ShadeClouds.CELL;
-		double drift = cells > 0 ? (level.gameTime % (cells * 400L) + level.worldPartialTicks) * (ShadeClouds.CELL / 400.0) : 0;
-		float ox = cells > 0 ? (float) floorMod(camera.pos.x - drift, period) : 0f, oz = cells > 0 ? (float) floorMod(camera.pos.z, period) : 0f;
+		// With a wind set (ShadeSky.setWind) the pattern drifts with it instead, by the game seconds elapsed (so a pause stops it).
+		double nowS = (level.gameTime + level.worldPartialTicks) / 20.0, dt = nowS - windT;
+		windT = nowS;
+		if (!(dt > 0.0 && dt <= 2.0)) dt = 0.0;
+		boolean wind = ShadeSky.windOn();
+		if (wind) {
+			windDx += ShadeSky.windX() * dt;
+			windDz += ShadeSky.windZ() * dt;
+			highDx = floorMod(highDx + 3.0 * ShadeSky.windX() * dt, 4096);
+			highDz = floorMod(highDz + 3.0 * ShadeSky.windZ() * dt, 4096);
+			if (cells > 0) {
+				windDx = floorMod(windDx, period);
+				windDz = floorMod(windDz, period);
+			}
+		}
+		double drift = wind ? windDx : cells > 0 ? (level.gameTime % (cells * 400L) + level.worldPartialTicks) * (ShadeClouds.CELL / 400.0) : 0;
+		float ox = cells > 0 ? (float) floorMod(camera.pos.x - drift, period) : 0f, oz = cells > 0 ? (float) floorMod(camera.pos.z - (wind ? windDz : 0.0), period) : 0f;
 		int cc = level.cloudColor;
 		// The sky's weather (ShadeSky). The high layer drifts faster than the low clouds (its periods divide 4096 blocks, so the wrap
 		// doesn't jump); a veil or fog around the camera softens the sun's shadows.
 		ShadeSky.State sk = ShadeSky.now;
-		double hx = (level.gameTime % 40000L + level.worldPartialTicks) * 0.1024, hz = (level.gameTime % 160000L + level.worldPartialTicks) * 0.0256;
-		float inFog = sk.fog * (1f - smooth(sk.fogTop, sk.fogTop + 6f, (float) camera.pos.y));
-		float shadowK = Shade.SHADOW * (1f - 0.45f * sk.cirrostratus) * (1f - 0.7f * inFog);
+		double hx = wind ? highDx : (level.gameTime % 40000L + level.worldPartialTicks) * 0.1024, hz = wind ? highDz : (level.gameTime % 160000L + level.worldPartialTicks) * 0.0256;
+		// The sky map (ShadeSky.setMap), uploaded when it changes, and where the camera is on it: the map moves with the wind since
+		// it was set. The veil and fog at the camera come from it too.
+		ShadeSky.SkyMap sm = ShadeSky.map();
+		if (sm != skyUploaded) uploadSky(sm);
+		boolean mapOn = sm != null && skyView != null;
+		float wvx = wind ? ShadeSky.windX() : 0f, wvz = wind ? ShadeSky.windZ() : 0f;
+		double mapAge = mapOn ? Math.max(0.0, Math.min(nowS - sm.time(), 60.0)) : 0.0;
+		double kx = mapOn ? camera.pos.x - sm.originX() - wvx * mapAge : 0, kz = mapOn ? camera.pos.z - sm.originZ() - wvz * mapAge : 0;
+		float veil = sk.cirrostratus, fogD = sk.fog, fogT = sk.fogTop;
+		if (mapOn) {
+			int n = sm.size();
+			int mi = Math.max(0, Math.min(n - 1, (int) Math.floor(kx / sm.cell()))), mj = Math.max(0, Math.min(n - 1, (int) Math.floor(kz / sm.cell())));
+			veil = sm.data()[(mj * n + mi) * 6 + 3];
+			fogD = sm.data()[(mj * n + mi) * 6 + 4];
+			fogT = sm.data()[(mj * n + mi) * 6 + 5];
+		}
+		// The storm list, moved with the wind since it was set (relative to the camera, in lights).
+		ShadeSky.Storms storms = ShadeSky.storms();
+		double stormAge = storms != null ? Math.max(0.0, Math.min(nowS - storms.time(), 60.0)) : 0.0;
+		float inFog = fogD * (1f - smooth(fogT, fogT + 6f, (float) camera.pos.y));
+		float shadowK = Shade.SHADOW * (1f - 0.45f * veil) * (1f - 0.7f * inFog);
 		ShadeLights.update(camera.pos);
 		ShadeRays.update(camera.pos);
 		float rays = sunny ? ShadeRays.strength(elev, rain) : 0f;
-		writeLights(camera, sky.sunAngle);
+		writeLights(camera, sky.sunAngle, storms, stormAge, wvx, wvz);
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			ByteBuffer data = Std140Builder.onStack(stack, UBO_SIZE)
 				.putMat4f(proj).putMat4f(inv)
@@ -231,6 +274,8 @@ public final class ShadePass {
 				.putVec4(sk.cumulus, sk.cumulonimbus, sk.cirrus, sk.cirrostratus)
 				.putVec4(sk.fog, sk.fogTop, (float) floorMod(camera.pos.x - hx, 4096), (float) floorMod(camera.pos.z - hz, 4096))
 				.putVec4((float) floorMod(camera.pos.x, 4096), (float) floorMod(camera.pos.z, 4096), (level.gameTime % 72000L + level.worldPartialTicks) / 20f, 0f)
+				.putVec4(mapOn ? 1f : 0f, mapOn ? sm.size() : 0f, mapOn ? sm.cell() : 1f, storms != null ? 1f : 0f)
+				.putVec4((float) kx, (float) kz, storms != null ? storms.count() : 0f, 0f)
 				.get();
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), data);
 		}
@@ -262,6 +307,7 @@ public final class ShadePass {
 				pass.setUniform("OccSampler", occTarget.getColorTextureView(), nearest);
 				pass.setUniform("HandSampler", main.getDepthTextureView(), nearest);
 				pass.setUniform("CloudSampler", cloudMap != null ? cloudMap : occTarget.getColorTextureView(), nearest);
+				pass.setUniform("SkyMapSampler", mapOn ? skyView : occTarget.getColorTextureView(), nearest);
 				pass.setUniform("ShadeLights", lights);
 				pass.draw(3, 1, 0, 0);
 			}
@@ -278,7 +324,7 @@ public final class ShadePass {
 	}
 
 	/** The nearest emitters into the lights buffer, moved into view space (camera-relative, rotated) so the shader can use them as is. */
-	private static void writeLights(CameraRenderState camera, float sunAngle) {
+	private static void writeLights(CameraRenderState camera, float sunAngle, ShadeSky.Storms storms, double stormAge, float wvx, float wvz) {
 		Vector3f v = new Vector3f();
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			Std140Builder b = Std140Builder.onStack(stack, LIGHTS_SIZE);
@@ -312,8 +358,51 @@ public final class ShadePass {
 				int h = Float.floatToIntBits(g[n * 4] * 31f + g[n * 4 + 1]) * 0x9E3779B1;
 				b.putVec4(e.x, e.y, e.z, i < ShadeRays.MAX ? 0.9f + ((h >>> 24) / 255f) * 0.8f : 0.55f + ((h >>> 16 & 255) / 255f) * 0.45f);
 			}
+			// Storms (ShadeSky.setStorms): centre relative to the camera, carried along the wind; the rest as set.
+			int sc = storms != null ? storms.count() : 0;
+			float[] sd = storms != null ? storms.data() : null;
+			for (int i = 0; i < 16; i++) {
+				if (i < sc) {
+					b.putVec4((float) (sd[i * 8] + wvx * stormAge - camera.pos.x), (float) (sd[i * 8 + 1] + wvz * stormAge - camera.pos.z), sd[i * 8 + 2], sd[i * 8 + 3]);
+				} else {
+					b.putVec4(0f, 0f, 0f, 0f);
+				}
+			}
+			for (int i = 0; i < 16; i++) {
+				if (i < sc) b.putVec4(sd[i * 8 + 4], sd[i * 8 + 5], sd[i * 8 + 6], sd[i * 8 + 7]);
+				else b.putVec4(0f, 0f, 0f, 0f);
+			}
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(lights.slice(), b.get());
 		}
+	}
+
+	/** The sky map into its texture, size x 2 size: cover / 2, darkness, cirrus and veil above; fog, fog top and a 1 below. */
+	private static void uploadSky(ShadeSky.SkyMap m) {
+		skyUploaded = m;
+		if (m == null) return;
+		int n = m.size();
+		if (skyTex == null || skySize != n) {
+			if (skyView != null) skyView.close();
+			if (skyTex != null) skyTex.close();
+			skyTex = RenderSystem.getDevice().createTexture(() -> "mcopt sky map", 15, GpuFormat.RGBA8_UNORM, n, n * 2, 1, 1);
+			skyView = RenderSystem.getDevice().createTextureView(skyTex);
+			skySize = n;
+		}
+		float[] d = m.data();
+		try (NativeImage img = new NativeImage(n, n * 2, false)) {
+			for (int j = 0; j < n; j++) {
+				for (int i = 0; i < n; i++) {
+					int b = (j * n + i) * 6;
+					img.setPixel(i, j, byteOf(d[b + 3]) << 24 | byteOf(d[b] / 2f) << 16 | byteOf(d[b + 1]) << 8 | byteOf(d[b + 2]));  // ARGB
+					img.setPixel(i, n + j, 0xFF000000 | byteOf(d[b + 4]) << 16 | byteOf((d[b + 5] + 64f) / 448f) << 8);
+				}
+			}
+			RenderSystem.getDevice().createCommandEncoder().writeToTexture(skyTex, img);
+		}
+	}
+
+	private static int byteOf(float v) {
+		return Math.round(255f * Math.max(0f, Math.min(1f, v)));
 	}
 
 	private static double floorMod(double a, double m) {

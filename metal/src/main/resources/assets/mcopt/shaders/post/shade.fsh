@@ -9,6 +9,7 @@ uniform sampler2D ColorSampler;
 uniform sampler2D DepthSampler;
 uniform sampler2D OccSampler;
 uniform sampler2D CloudSampler; // the cloud cell map: r cloud, g density (ShadeClouds)
+uniform sampler2D SkyMapSampler; // the sky map (ShadeSky.setMap): top half cover/2, darkness, cirrus, veil; bottom half fog, fog top, 0, 1
 uniform sampler2D HandSampler;  // the main target's depth, which by now has the first-person hand in it
 
 layout(std140) uniform ShadeInfo {
@@ -35,6 +36,8 @@ layout(std140) uniform ShadeInfo {
     vec4 SkyA;     // the sky's weather (ShadeSky): x cumulus cover (1 the map as vanilla, 2 overcast), y cumulonimbus, z cirrus, w cirrostratus
     vec4 SkyB;     // x fog 0..1, y fog top (world y), zw the camera's place on the high cloud layer (blocks, wrapped at 4096)
     vec4 SkyC;     // xy the camera's world x, z (wrapped at 4096), z seconds (wrapping hourly)
+    vec4 SkyD;     // x sky map on, y its cells per side, z cell size (blocks), w storm list on
+    vec4 SkyE;     // xy camera - map origin - wind drift (blocks), z storm count, w unused
 };
 
 // The light-emitting blocks nearest the camera (ShadeLights): view-space centre and emission 0..1, and hue.
@@ -43,6 +46,8 @@ layout(std140) uniform ShadeLights {
     vec4 LightCol[32];
     vec4 RayA[12];   // god ray shafts (ShadeRays): top end (canopy gap), view space; w width (blocks)
     vec4 RayB[12];   // bottom end (ground); w brightness
+    vec4 StormA[16]; // storm list (ShadeSky.setStorms): xy centre relative to the camera (blocks), z core radius, w top (world y)
+    vec4 StormB[16]; // x anvil radius, yz anvil shift (blocks), w stage 0..2
 };
 
 layout(location = 0) in vec2 texCoord;
@@ -124,18 +129,43 @@ vec4 cloudMapAt(vec2 xz) {
     return v;
 }
 
-// Rain thickens the clouds: more of each mass counts as cloud, and it is denser. So does cover past 1 (overcast).
-float thick() {
-    return max(CloudX.x, SkyA.x - 1.0);
+// The sky at a point (rel: blocks from the camera, horizontally): cover (0..2), darkness (0..1), cirrus, veil. From the sky map,
+// blended between the four nearest cells (clamped at its edge) when there is one, else the scalar sky.
+vec4 skyAt(vec2 rel) {
+    if (SkyD.x < 0.5) return vec4(SkyA.x, 0.0, SkyA.z, SkyA.w);
+    vec2 p = (rel + SkyE.xy) / SkyD.z - 0.5;
+    vec2 i = floor(p), f = fract(p);
+    int n = int(SkyD.y + 0.5) - 1;
+    ivec2 a = clamp(ivec2(i), 0, n), b = clamp(ivec2(i) + 1, 0, n);
+    vec4 v = mix(mix(texelFetch(SkyMapSampler, a, 0), texelFetch(SkyMapSampler, ivec2(b.x, a.y), 0), f.x),
+        mix(texelFetch(SkyMapSampler, ivec2(a.x, b.y), 0), texelFetch(SkyMapSampler, b, 0), f.x), f.y);
+    return vec4(v.x * 2.0, v.y, v.z, v.w);
 }
 
-float rainDensity(float g) {
-    return min(1.0, g + 0.3 * thick());
+// The fog at a point: density 0..1 and top (world y).
+vec2 fogAt(vec2 rel) {
+    if (SkyD.x < 0.5) return vec2(SkyB.x, SkyB.y);
+    vec2 p = (rel + SkyE.xy) / SkyD.z - 0.5;
+    vec2 i = floor(p), f = fract(p);
+    int n = int(SkyD.y + 0.5) - 1;
+    ivec2 a = clamp(ivec2(i), 0, n) + ivec2(0, n + 1), b = clamp(ivec2(i) + 1, 0, n) + ivec2(0, n + 1);
+    vec4 v = mix(mix(texelFetch(SkyMapSampler, a, 0), texelFetch(SkyMapSampler, ivec2(b.x, a.y), 0), f.x),
+        mix(texelFetch(SkyMapSampler, ivec2(a.x, b.y), 0), texelFetch(SkyMapSampler, b, 0), f.x), f.y);
+    return vec2(v.x, v.y * 448.0 - 64.0);
+}
+
+// Rain thickens the clouds: more of each mass counts as cloud, and it is denser. So does cover past 1 (overcast) and darkness.
+float thick(vec4 sky) {
+    return max(CloudX.x, max(sky.x - 1.0, sky.y));
+}
+
+float rainDensity(float g, vec4 sky) {
+    return min(1.0, g + 0.3 * thick(sky));
 }
 
 // Cover under 1 keeps only the denser hearts of the map's clouds (fewer, smaller cumulus); over 1 fills in around them.
-bool cloudCovered(vec4 m) {
-    return (m.r > 0.5 && (SkyA.x >= 1.0 || m.g > 1.0 - SkyA.x)) || m.g > mix(1.1, 0.3, thick());
+bool cloudCovered(vec4 m, vec4 sky) {
+    return (m.r > 0.5 && (sky.x >= 1.0 || m.g > 1.0 - sky.x)) || m.g > mix(1.1, 0.3, thick(sky));
 }
 
 float hash12(vec2 p) {
@@ -181,6 +211,50 @@ vec4 stormAt(vec2 cell) {
     return o;
 }
 
+// The storms of a list (ShadeSky.setStorms) at a 12-block cell (centre rel to the camera), in stormAt's layout: the union over the
+// list. Each is a tower with a skirt and, once mature, an anvil carried by its shift; a stage past 1 shrinks it away.
+vec4 stormList(vec2 rel, vec2 cell) {
+    vec4 o = vec4(0.0, -1.0, 0.0, -1.0);
+    int count = int(SkyE.z + 0.5);
+    vec2 c = mod(cell, CloudO.w);
+    float j0 = 9.6 * (hash12(c) - 0.5), j1 = 9.6 * (hash12(c + 1.0) - 0.5);
+    float base = CloudP.y;
+    for (int i = 0; i < 16; i++) {
+        if (i >= count) break;
+        vec4 a = StormA[i], b = StormB[i];
+        vec2 dc = rel - a.xy;
+        float reach = max(a.z * 1.6, b.x) + length(b.yz) + 6.0;
+        if (dot(dc, dc) > reach * reach) continue;
+        float growth = min(b.w, 1.0), fade = clamp(b.w - 1.0, 0.0, 1.0);
+        float core = a.z * (1.0 - 0.4 * fade);
+        float gr = growth * (1.0 - 0.6 * fade);
+        float peak = base + 4.0 + floor(max(a.w - base - 4.0, 0.0) * gr / 2.0) * 2.0;
+        float r = length(dc) + j0;
+        vec2 t = vec2(0.0, -1.0);
+        if (r < core) {
+            t.x = base - 6.0 - floor(growth * 4.0 / 2.0) * 2.0;
+            t.y = base + 4.0 + floor((peak - base - 4.0) * (1.0 - 0.35 * (r / core) * (r / core)) / 2.0) * 2.0;
+        } else if (r < core * 1.6) {
+            t.x = base - 4.0;
+            t.y = base + 4.0 + floor(gr * 30.0 * (1.0 - (r - core) / (core * 0.6)) / 2.0) * 2.0;
+        }
+        if (t.y > t.x) {
+            if (o.y > o.x) { o.x = min(o.x, t.x); o.y = max(o.y, t.y); }
+            else o.xy = t;
+        }
+        float mature = smoothstep(0.55, 1.0, growth);
+        float ar = (a.z + (b.x - a.z) * mature) * (1.0 - fade);
+        float ra = length(rel - a.xy - b.yz * mature) + j1;
+        if (mature > 0.0 && ar > 1.0 && ra < ar) {
+            float top = peak + 2.0;
+            float bot = top - 4.0 - floor(10.0 * (1.0 - ra / ar) / 2.0) * 2.0;
+            if (o.w > o.z) { o.z = min(o.z, bot); o.w = max(o.w, top); }
+            else o.zw = vec2(bot, top);
+        }
+    }
+    return o;
+}
+
 // The ray o + d t through the slab lo..hi, within [tCur, tOut]; false if it misses.
 bool slab(vec3 o, vec3 d, float lo, float hi, float tCur, float tOut, out float tin, out float tout) {
     if (abs(d.y) < 1e-5) {
@@ -202,14 +276,14 @@ void cloudColumn(float g, float type, out float top, out float bot) {
 }
 
 // The colour of a cloud face at h: vanilla's face tones, darker low down and in thick clouds, with the light of the time of day.
-vec3 cloudShade(vec3 h, vec3 d, vec3 sunW, bool side, int axis, vec2 stepv, float tin, float g, float top, float bot, vec3 sky, bool storm) {
+vec3 cloudShade(vec3 h, vec3 d, vec3 sunW, bool side, int axis, vec2 stepv, float tin, float g, float top, float bot, vec3 sky, vec4 sk, bool storm) {
     vec3 n;
     if (side) n = axis == 0 ? vec3(-stepv.x, 0.0, 0.0) : vec3(0.0, 0.0, -stepv.y);
     else if (tin <= 1e-3 && h.y > bot && h.y < top) n = vec3(0.0, 1.0, 0.0); // inside a cloud
     else n = vec3(0.0, d.y > 0.0 ? -1.0 : 1.0, 0.0);
     // Height and thickness from the smooth density, so tones grade across neighbouring columns instead of stepping per cell.
     vec4 sm = cloudMapAt(h.xz);
-    g = rainDensity(sm.g);
+    g = rainDensity(sm.g, sk);
     float hs = mix(0.3, 1.9, sm.b);
     float sTop = CloudP.y + 4.0 + g * 18.0 * hs, sBot = CloudP.y - g * 6.0 * mix(0.5, 1.5, sm.b) - 4.0 * CloudX.x;
     // A storm's tower and anvil are shaded over their own height: a dark base, tops bright in the sun even in the rain.
@@ -232,7 +306,7 @@ vec3 cloudShade(vec3 h, vec3 d, vec3 sunW, bool side, int axis, vec2 stepv, floa
     // Silver lining: thin clouds toward the sun light up from behind.
     float behind = pow(max(dot(d, sunW), 0.0), 6.0) * (1.0 - g) * mix(0.25, 0.8, max(day, low));
     // Rain: the sun's highlights go, and the clouds go a heavy grey, darkest underneath.
-    float wet = max(CloudX.x, 0.6 * (SkyA.x - 1.0)) * (storm ? 1.0 - 0.7 * hf : 1.0);
+    float wet = max(CloudX.x, max(0.6 * (sk.x - 1.0), sk.y)) * (storm ? 1.0 - 0.7 * hf : 1.0);
     if (storm) amb *= mix(0.55, 1.05, hf);
     light *= 1.0 - 0.8 * wet;
     behind *= 1.0 - wet;
@@ -255,18 +329,20 @@ float fbm(vec2 p) {
 // cirrostratus (SkyA.w), a thin milky veil with a 22-degree halo around the sun or moon. Sampled in 4-block cells so it stays
 // blocky like the rest. Returns colour and coverage; only for rays to the sky.
 vec4 highClouds(vec3 d, vec3 sunW) {
-    if (SkyA.z + SkyA.w <= 0.003) return vec4(0.0);
+    if (SkyD.x < 0.5 && SkyA.z + SkyA.w <= 0.003) return vec4(0.0);
     float h = CloudP.y + 190.0 - CloudO.y;
     if (h <= 0.0 || d.y < 0.01) return vec4(0.0);
     float t = h / d.y;
+    vec4 sk = skyAt(d.xz * t);
+    if (sk.z + sk.w <= 0.003) return vec4(0.0);
     vec2 p = floor((SkyB.zw + d.xz * t) / 4.0) * 4.0;
     float horizon = smoothstep(0.01, 0.12, d.y) * (1.0 - smoothstep(3000.0, 7000.0, t));
     // Streaks: noise stretched along the wind, bent by a slower field (the hooks), in patches.
     vec2 q = vec2(p.x / 260.0, (p.y + 40.0 * vnoise(p / 380.0)) / 34.0);
     float fib = fbm(q);
     float patches = smoothstep(0.35, 0.65, vnoise(p / 900.0 + 3.0));
-    float cirrus = SkyA.z * smoothstep(0.5, 0.78, fib) * mix(0.3, 1.0, patches) * 0.8;
-    float veil = SkyA.w * (0.32 + 0.14 * vnoise(p / 520.0) + 0.12 * smoothstep(0.55, 0.8, fib));
+    float cirrus = sk.z * smoothstep(0.5, 0.78, fib) * mix(0.3, 1.0, patches) * 0.8;
+    float veil = sk.w * (0.32 + 0.14 * vnoise(p / 520.0) + 0.12 * smoothstep(0.55, 0.8, fib));
     float a = clamp(max(cirrus, veil) + 0.5 * min(cirrus, veil), 0.0, 0.9) * horizon;
     // Lit: white by day; high up, they catch the sunrise and sunset colours early and keep them after the sun is down.
     float day = CloudP.w;
@@ -280,10 +356,11 @@ vec4 highClouds(vec3 d, vec3 sunW) {
 
 // The halo a cirrostratus veil makes around the sun or moon: a ring 22 degrees out, reddish on its inner edge.
 vec3 halo(vec3 d, vec3 sunW) {
-    if (SkyA.w <= 0.003) return vec3(0.0);
+    float veil = skyAt(vec2(0.0)).w;
+    if (veil <= 0.003) return vec3(0.0);
     float ang = acos(clamp(dot(d, sunW), -1.0, 1.0));
     vec3 ring = exp(-pow((vec3(ang) - vec3(0.378, 0.384, 0.392)) / 0.016, vec3(2.0)));
-    return ring * SkyA.w * 0.22 * mix(0.3, 1.0, CloudP.w) * (1.0 - CloudX.x) * smoothstep(0.0, 0.1, d.y);
+    return ring * veil * 0.22 * mix(0.3, 1.0, CloudP.w) * (1.0 - CloudX.x) * smoothstep(0.0, 0.1, d.y);
 }
 
 // Fog (SkyB.x): a layer filling the low ground up to SkyB.y (its top swelling and sinking a few blocks as it drifts), thinning out
@@ -295,11 +372,20 @@ float fogG(float y, float top) {
 
 vec3 fog(vec3 col, vec3 d, float dist, vec3 sunW) {
     float len = min(dist, 3000.0);
-    float y0 = CloudO.y, y1 = y0 + d.y * len;
-    vec2 end = SkyC.xy + d.xz * min(len, 300.0);
-    float top = SkyB.y + 4.0 * (vnoise(end / 48.0 + SkyC.z * 0.01) - 0.5);
-    float od = abs(y1 - y0) < 1e-3 ? len * (fogG(y0 + 1e-3, top) - fogG(y0, top)) / 1e-3 : len * (fogG(y1, top) - fogG(y0, top)) / (y1 - y0);
-    float a = 1.0 - exp(-od * 0.08 * SkyB.x);
+    float y0 = CloudO.y;
+    // With a sky map the ray is split in three, each part with the fog of the ground under its middle.
+    int segs = SkyD.x > 0.5 ? 3 : 1;
+    float od = 0.0;
+    for (int i = 0; i < 3; i++) {
+        if (i >= segs) break;
+        float s0 = len * float(i) / float(segs), s1 = len * float(i + 1) / float(segs);
+        vec2 mid = d.xz * min(segs == 1 ? len : 0.5 * (s0 + s1), 300.0);
+        vec2 f = fogAt(mid);
+        float top = f.y + 4.0 * (vnoise((SkyC.xy + mid) / 48.0 + SkyC.z * 0.01) - 0.5);
+        float ya = y0 + d.y * s0, yb = y0 + d.y * s1, seg = s1 - s0;
+        od += f.x * (abs(yb - ya) < 1e-3 ? seg * (fogG(ya + 1e-3, top) - fogG(ya, top)) / 1e-3 : seg * (fogG(yb, top) - fogG(ya, top)) / (yb - ya));
+    }
+    float a = 1.0 - exp(-od * 0.08);
     // Grey-white with the sky's light (vanilla's cloud colour: dim at night, greyer in rain), glowing toward the sun.
     vec3 fc = CloudCol.rgb * 0.88;
     fc *= mix(vec3(1.0), Tint.rgb / max(dot(Tint.rgb, vec3(0.3333)), 0.05), 0.3 * Sun.w);
@@ -338,7 +424,7 @@ vec4 clouds(vec3 dirV, float tLimit, vec3 sky) {
     float base = CloudP.y;
     float cells = CloudO.w;
     const float CELL = 12.0;
-    float yMin = base - 14.0, yMax = base + (SkyA.y > 0.0 ? 136.0 : 40.0);
+    float yMin = base - 14.0, yMax = base + ((SkyD.w > 0.5 ? SkyE.z > 0.0 : SkyA.y > 0.0) ? 136.0 : 40.0);
     vec3 o = vec3(CloudO.x, CloudO.y, CloudO.z);
     // The slab the columns can occupy.
     float t0, t1;
@@ -368,11 +454,13 @@ vec4 clouds(vec3 dirV, float tLimit, vec3 sky) {
         float tOut = min(min(tNext.x, tNext.y), t1);
         ivec2 c = ivec2(mod(cell, cells));
         vec4 m = texelFetch(CloudSampler, c, 0);
-        bool has = cloudCovered(m);
-        float g = rainDensity(m.g), top = 0.0, bot = 0.0;
+        vec2 rel = (cell + 0.5) * CELL - CloudO.xz;
+        vec4 sk = skyAt(rel);
+        bool has = cloudCovered(m, sk);
+        float g = rainDensity(m.g, sk), top = 0.0, bot = 0.0;
         if (has) cloudColumn(g, m.b, top, bot);
         // A storm's tower joins the cumulus column; its anvil is a slab of its own above.
-        vec4 st = stormAt(cell);
+        vec4 st = SkyD.w > 0.5 ? stormList(rel, cell) : stormAt(cell);
         bool storm = st.y > st.x;
         if (storm) {
             bot = has ? min(bot, st.x) : st.x;
@@ -387,7 +475,7 @@ vec4 clouds(vec3 dirV, float tLimit, vec3 sky) {
             if (tFirst < 0.0 || tin < tFirst) {
                 tFirst = tin;
                 col = cloudShade(o + d * tin, d, sunW, tin <= tCur + 1e-4 && axis >= 0, axis, stepv, tin, anvil ? 1.0 : g,
-                    anvil ? st.w : top, anvil ? st.z : bot, sky, storm || anvil);
+                    anvil ? st.w : top, anvil ? st.z : bot, sky, sk, storm || anvil);
             }
             tau += (tout - tin) * mix(0.1, 0.4, anvil ? 0.8 : g) * (1.0 + CloudX.x);
         }
@@ -460,10 +548,12 @@ void main() {
         if (sunW.y > 0.05 && pw.y < CloudP.y) {
             vec2 at = pw.xz + sunW.xz * ((CloudP.y + 2.0 - pw.y) / sunW.y);
             vec4 m = cloudMapAt(at);
-            float th = thick();
-            float keep = SkyA.x >= 1.0 ? 1.0 : smoothstep(0.9 - SkyA.x, 1.1 - SkyA.x, m.g);
+            vec4 sk = skyAt(at - CloudO.xz);
+            float th = thick(sk);
+            float keep = sk.x >= 1.0 ? 1.0 : smoothstep(0.9 - sk.x, 1.1 - sk.x, m.g);
             float cover = max(smoothstep(0.3, 0.7, m.r) * keep, smoothstep(mix(1.1, 0.3, th), mix(1.2, 0.4, th), m.g));
-            vec4 st = stormAt(floor(at / 12.0));
+            vec2 sc = floor(at / 12.0);
+            vec4 st = SkyD.w > 0.5 ? stormList((sc + 0.5) * 12.0 - CloudO.xz, sc) : stormAt(sc);
             if (st.y > st.x) cover = 1.0;
             float direct = mix(0.35, 1.0, lit * (1.0 - shadow));
             col *= mix(1.0, 0.72, cover * Sun.w * direct * (1.0 - CloudX.x));
@@ -502,7 +592,7 @@ void main() {
     }
 
     // Fog, in front of everything but the hand (and not under water).
-    if (SkyB.x > 0.003 && !hand && LightP.z < 0.5) {
+    if ((SkyB.x > 0.003 || SkyD.x > 0.5) && !hand && LightP.z < 0.5) {
         vec3 dW = normalize((ViewInv * vec4(viewDirAt(texCoord), 0.0)).xyz);
         vec3 sW = normalize((ViewInv * vec4(Sun.xyz, 0.0)).xyz);
         col = fog(col, dW, d0 > 0.0 ? length(viewPosAt(texCoord, d0)) : 1e4, sW);

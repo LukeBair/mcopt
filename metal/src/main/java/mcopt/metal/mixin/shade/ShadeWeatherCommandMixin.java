@@ -29,6 +29,7 @@ abstract class ShadeWeatherCommandMixin {
 
 	@Inject(method = "register", at = @At("TAIL"))
 	private static void mcopt$skyTypes(CommandDispatcher<CommandSourceStack> dispatcher, CallbackInfo ci) {
+		if (ShadeSky.external()) return;
 		LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("weather").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS));
 		for (ShadeSky.Type t : ShadeSky.Type.values()) {
 			String name = t == ShadeSky.Type.CLEAR ? "cloudless" : t.name().toLowerCase(Locale.ROOT);
@@ -41,6 +42,7 @@ abstract class ShadeWeatherCommandMixin {
 	}
 
 	private static int mcopt$sky(CommandContext<CommandSourceStack> c, ShadeSky.Type t, int ticks) {
+		if (ShadeSky.external()) return mcopt$handled(c);
 		ShadeSky.force(t, c.getSource().getLevel().getGameTime() + ticks);
 		String name = t == ShadeSky.Type.CLEAR ? "cloudless" : t.name().toLowerCase(Locale.ROOT);
 		c.getSource().sendSuccess(() -> Component.literal("Set the sky to " + name), true);
@@ -48,9 +50,16 @@ abstract class ShadeWeatherCommandMixin {
 	}
 
 	private static int mcopt$fog(CommandContext<CommandSourceStack> c, int ticks) {
+		if (ShadeSky.external()) return mcopt$handled(c);
 		ShadeSky.forceFog(c.getSource().getLevel().getGameTime() + ticks);
 		c.getSource().sendSuccess(() -> Component.literal("Brought in fog"), true);
 		return ticks;
+	}
+
+	/** The sky literals registered before a weather mod took the sky over (ShadeSky.takeOver) do nothing. */
+	private static int mcopt$handled(CommandContext<CommandSourceStack> c) {
+		c.getSource().sendFailure(Component.literal("The weather mod handles the sky"));
+		return 0;
 	}
 
 	@Inject(method = {"setClear", "setRain", "setThunder"}, at = @At("HEAD"))
