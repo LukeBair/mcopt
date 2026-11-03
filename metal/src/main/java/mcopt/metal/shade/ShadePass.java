@@ -37,7 +37,7 @@ import org.lwjgl.system.MemoryStack;
  */
 public final class ShadePass {
 	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4()
-		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().get();
+		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().get();
 	private static final int LIGHTS_SIZE = (ShadeLights.MAX * 2 + ShadeRays.MAX * 2) * 16;
 	private static RenderPipeline occ;
 	private static RenderPipeline shade;
@@ -197,6 +197,12 @@ public final class ShadePass {
 		double drift = cells > 0 ? (level.gameTime % (cells * 400L) + level.worldPartialTicks) * (ShadeClouds.CELL / 400.0) : 0;
 		float ox = cells > 0 ? (float) floorMod(camera.pos.x - drift, period) : 0f, oz = cells > 0 ? (float) floorMod(camera.pos.z, period) : 0f;
 		int cc = level.cloudColor;
+		// The sky's weather (ShadeSky). The high layer drifts faster than the low clouds (its periods divide 4096 blocks, so the wrap
+		// doesn't jump); a veil or fog around the camera softens the sun's shadows.
+		ShadeSky.State sk = ShadeSky.now;
+		double hx = (level.gameTime % 40000L + level.worldPartialTicks) * 0.1024, hz = (level.gameTime % 160000L + level.worldPartialTicks) * 0.0256;
+		float inFog = sk.fog * (1f - smooth(sk.fogTop, sk.fogTop + 6f, (float) camera.pos.y));
+		float shadowK = Shade.SHADOW * (1f - 0.45f * sk.cirrostratus) * (1f - 0.7f * inFog);
 		ShadeLights.update(camera.pos);
 		ShadeRays.update(camera.pos);
 		float rays = sunny ? ShadeRays.strength(elev, rain) : 0f;
@@ -205,7 +211,7 @@ public final class ShadePass {
 			ByteBuffer data = Std140Builder.onStack(stack, UBO_SIZE)
 				.putMat4f(proj).putMat4f(inv)
 				.putVec4(sun.x, sun.y, sun.z, day)
-				.putVec4(Shade.SHADOW, Shade.AO, Shade.GRADE, Shade.SHADOW_LEN)
+				.putVec4(shadowK, Shade.AO, Shade.GRADE, Shade.SHADOW_LEN)
 				.putVec4(Shade.debugNow, Shade.AO_RADIUS, 1f / main.width, 1f / main.height)
 				.putMat4f(shadowM)
 				.putVec4(2f * Shade.MAP_RADIUS / Shade.MAP_RES, 1f / Shade.MAP_RES, shadowView != null ? 1f : 0f, ShadeShadow.RANGE)
@@ -222,6 +228,9 @@ public final class ShadePass {
 				.putVec4(vp[0], vp[1], vp[2], 0f)
 				.putVec4(vp[3], vp[4], vp[5], 0f)
 				.putVec4(vp[6], vp[7], vp[8], 0f)
+				.putVec4(sk.cumulus, sk.cumulonimbus, sk.cirrus, sk.cirrostratus)
+				.putVec4(sk.fog, sk.fogTop, (float) floorMod(camera.pos.x - hx, 4096), (float) floorMod(camera.pos.z - hz, 4096))
+				.putVec4((float) floorMod(camera.pos.x, 4096), (float) floorMod(camera.pos.z, 4096), (level.gameTime % 72000L + level.worldPartialTicks) / 20f, 0f)
 				.get();
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), data);
 		}

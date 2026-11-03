@@ -37,6 +37,21 @@ roll per event, steady for its length), each with one palette picked by the same
 golden hour, violet twilight, smoky red): its light on the terrain and the clouds' lit sides, its colour in their shaded undersides,
 and its tint in the sky toward the horizon.
 `-Dmcopt.shade.forceVivid=true` makes them all vivid, for testing.
+Sky types and fog (ShadeSky): each tick a target sky is set and what's drawn eases toward it (about 30 s; 3 s after a /weather).
+Layers: cumulus cover (0..2; 1 is the map as vanilla, under 1 keeps only the denser hearts, over 1 fills in toward overcast),
+cumulonimbus (at most one storm per 16x16 map cells, the first to grow as it rises: a core up to ~130 blocks with a skirt, then an
+anvil slab spreading downwind from its top; dark base, bright tops even in rain), cirrus and cirrostratus (a 2D layer ~190 blocks above
+the cumulus in 4-block cells: wind-stretched fibres with hooks, or a milky veil with a 22-degree halo; lit early and late in the
+dawn/dusk colours), and fog (a layer filling the ground up to a top a few blocks above the valley floor around the player, a low
+quantile of the heightmap; optical depth in closed form, thinning over 5 blocks above the top, which drifts up and down). A veil
+softens sun shadows, fog around the camera more so. The built-in model: vanilla rain and thunder (rain: thicker cumulus and a grey
+veil; thunder: cumulonimbus), a per-day roll for fair-weather cumulus and cirrus (clearer in dry biomes), cirrus thickening into a veil
+ahead of rain (single player reads the server's rain timer), afternoon storms on some humid tropical days (and a few temperate ones),
+and fog on some mornings by climate (base temperature and downfall of the biomes around the player, so modded biomes fit in): wet,
+temperate, cold and coastal ones, more often within a day of rain, built up after midnight and burnt off by mid morning, a few days
+grey all day. `/weather cumulus|cumulonimbus|cirrus|cirrostratus|cloudless [duration]` holds a sky type, `/weather fog [duration]`
+brings in fog, and vanilla's clear/rain/thunder hand the sky back to the model (ShadeWeatherCommandMixin; single player). A weather mod
+can replace the model with `ShadeSky.setProvider` (it gets the model's answer as its starting point).
 `mcopt.shade.blockLight` (default 0.6, "Light colours"): ShadeLights finds the 32 light-emitting blocks nearest the camera every 20
 frames, each with a hue (torch warm, soul fire and sea lanterns cool, redstone red, amethyst violet, else the block's map colour), and
 the composite shifts the colour of what they light toward it, where the sun isn't the main light. No occlusion: it's a tint.
