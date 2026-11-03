@@ -1,6 +1,7 @@
 package mcopt.metal.mixin.shade;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import mcopt.metal.compat.DhDepth;
 import mcopt.metal.shade.Shade;
 import mcopt.metal.shade.ShadeDepth;
 import mcopt.metal.shade.ShadePass;
@@ -33,5 +34,6 @@ abstract class ShadeGameRendererMixin {
 		if (Shade.ON && Shade.enabled && !Shade.suppress) ShadePass.run(this.mainRenderTarget, this.resourcePool, level, 1f - level.skyRenderState.rainBrightness);
 		Shade.maybeShot(this.mainRenderTarget);
 		ShadeDepth.endFrame();
+		DhDepth.endFrame();
 	}
 }

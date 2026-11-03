@@ -14,7 +14,7 @@ public final class CompatMixinPlugin implements IMixinConfigPlugin {
 
 	@Override
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-		if (mixinClassName.endsWith(".DhRenderApiMixin")) return FabricLoader.getInstance().isModLoaded("distanthorizons");
+		if (mixinClassName.endsWith(".DhRenderApiMixin") || mixinClassName.endsWith(".DhDrawnMixin")) return FabricLoader.getInstance().isModLoaded("distanthorizons");
 		return false;
 	}
 

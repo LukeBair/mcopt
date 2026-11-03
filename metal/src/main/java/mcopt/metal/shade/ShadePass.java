@@ -22,6 +22,7 @@ import com.mojang.renderpearl.api.textures.GpuTextureView;
 import java.nio.ByteBuffer;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import mcopt.metal.compat.DhDepth;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
@@ -39,7 +40,9 @@ import org.lwjgl.system.MemoryStack;
  */
 public final class ShadePass {
 	private static final int UBO_SIZE = new Std140SizeCalculator().putMat4f().putMat4f().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4()
-		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().get();
+		.putMat4f().putVec4().putVec4().putVec4().putVec4().putMat4f().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().putVec4().get();
+	/** The longest the clouds reach over Distant Horizons LODs (blocks): what 288 cells of the march cover. */
+	private static final float LOD_CLOUD_MAX = 2400f;
 	private static final int LIGHTS_SIZE = (ShadeLights.MAX * 2 + ShadeRays.MAX * 2 + 32) * 16;
 	private static RenderPipeline occ;
 	private static RenderPipeline shade;
@@ -70,6 +73,7 @@ public final class ShadePass {
 			.withUniform("DepthSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("OccSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("HandSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+			.withUniform("LodSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("CloudSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("SkyMapSampler", UniformType.COMBINED_IMAGE_SAMPLER)
 			.withUniform("ShadeLights", UniformType.UNIFORM_BUFFER)
@@ -198,6 +202,9 @@ public final class ShadePass {
 		int scale = Shade.HALF ? 2 : 1;
 		int ow = (main.width + scale - 1) / scale, oh = (main.height + scale - 1) / scale;
 		net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+		// Distant Horizons' depth, if it drew this frame; clouds then reach toward its LODs (a longer march, see shade.fsh).
+		boolean lodOn = DhDepth.refresh();
+		float cloudReach = lodOn ? Math.max(Shade.CLOUD_DIST, Math.min(LOD_CLOUD_MAX, DhDepth.reach())) : Shade.CLOUD_DIST;
 		float vanilla = mc.options.getEffectiveRenderDistance() * 16f;
 		Matrix4f viewInv = camera.viewRotationMatrix.invert(new Matrix4f());
 		// Clouds: the camera's place on the wrapping cell map, drifting +x at vanilla's 12 blocks per 400 ticks.
@@ -263,7 +270,7 @@ public final class ShadePass {
 				.putVec4(scale, vanilla, ow, oh)
 				.putVec4(Shade.SOFT ? 1f : 0f, ShadeShadow.BLEND, 0f, 0f)
 				.putMat4f(viewInv)
-				.putVec4(cloudMap != null ? 1f : 0f, level.cloudHeight, Shade.CLOUD_DIST, sunW)
+				.putVec4(cloudMap != null ? 1f : 0f, level.cloudHeight, cloudReach, sunW)
 				.putVec4(ox, (float) camera.pos.y, oz, cells)
 				.putVec4((cc >> 16 & 255) / 255f, (cc >> 8 & 255) / 255f, (cc & 255) / 255f, (cc >>> 24) / 255f)
 				.putVec4(ShadeLights.count, Shade.BLOCK_LIGHT, camera.fogType == FogType.WATER ? 1f : 0f, Math.max(day, 0.15f))
@@ -278,6 +285,7 @@ public final class ShadePass {
 				.putVec4(mapOn ? 1f : 0f, mapOn ? sm.size() : 0f, mapOn ? sm.cell() : 1f, storms != null ? 1f : 0f)
 				.putVec4((float) kx, (float) kz, storms != null ? storms.count() : 0f, 0f)
 				.putVec4(sunTrue.x, sunTrue.y, sunTrue.z, elev)
+				.putVec4(lodOn ? 1f : 0f, lodOn ? DhDepth.m22() : 0f, lodOn ? DhDepth.m23() : 0f, 0f)
 				.get();
 			RenderSystem.getDevice().createCommandEncoder().writeToBuffer(ubo.slice(), data);
 		}
@@ -308,6 +316,7 @@ public final class ShadePass {
 				pass.setUniform("DepthSampler", ShadeDepth.view(), nearest);
 				pass.setUniform("OccSampler", occTarget.getColorTextureView(), nearest);
 				pass.setUniform("HandSampler", main.getDepthTextureView(), nearest);
+				pass.setUniform("LodSampler", lodOn ? DhDepth.view() : ShadeDepth.view(), nearest);
 				pass.setUniform("CloudSampler", cloudMap != null ? cloudMap : occTarget.getColorTextureView(), nearest);
 				pass.setUniform("SkyMapSampler", mapOn ? skyView : occTarget.getColorTextureView(), nearest);
 				pass.setUniform("ShadeLights", lights);

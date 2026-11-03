@@ -20,8 +20,13 @@ to the pixel's, so they don't bleed across edges), applies them and grades. Off 
 `mcopt.shade.soft` (default false, "Wide soft shadows" in the menu): by default sun shadows are solid with a slightly soft edge
 (four shadow map lookups on a 1.5-texel grid, blended bilinearly: about 0.2 blocks of ramp, no noise); on is the old 16-tap rotated
 disc, wider and a little grainy. With it off the contact march is unjittered too, so shadows have no speckle.
-Only mcopt's / vanilla's own terrain is shaded: Distant Horizons writes its LODs into the colour without depth, so they read as
-sky, and the effects also fade out over the last chunk of the render distance. The first-person hand and held item are drawn after
+Only mcopt's / vanilla's own terrain is shaded (shadows, ao; the effects also fade out over the last chunk of the render distance).
+Distant Horizons draws its LODs into its own colour and depth textures and copies only the colour into the main target, so the level
+depth is empty over a LOD. With DH loaded (DhDepth, DhDrawnMixin marking the frames it drew) the composite also samples DH's depth
+where the level's is empty, turning it to a view depth with DH's projection (m23 / (d + m22): the game's with other clip planes). Such
+pixels are terrain, not sky: no cirrus, halo or vivid tint over them, fog and clouds use their distance, clouds shadow them. The clouds'
+reach rises to DH's render radius (at most 2400 blocks, 288 march cells instead of 128); without DH nothing changes. The log has one
+`[mcopt] shade: Distant Horizons depth` line saying whether it was found. The first-person hand and held item are drawn after
 the level depth is copied, so the composite reads the main depth (which by then holds only the hand) and leaves those pixels unshaded.
 
 `mcopt.shade.clouds` (default true, "Stylized clouds"; independent of Video Settings' Clouds option) replaces vanilla's cloud mesh
