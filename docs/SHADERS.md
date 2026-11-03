@@ -39,7 +39,8 @@ and its tint in the sky toward the horizon.
 `-Dmcopt.shade.forceVivid=true` makes them all vivid, for testing.
 Sky types and fog (ShadeSky): each tick a target sky is set and what's drawn eases toward it (about 30 s; 3 s after a /weather).
 Layers: cumulus cover (0..2; 1 is the map as vanilla, under 1 keeps only the denser hearts, over 1 fills in toward overcast),
-cumulonimbus (at most one storm per 16x16 map cells, the first to grow as it rises: a core up to ~130 blocks with a skirt, then an
+cumulonimbus (at most one storm per 32x32 map cells, the first to grow as it rises: a core 7-10 cells across rising up to ~130
+blocks with a wide skirt, then an
 anvil slab spreading downwind from its top; dark base, bright tops even in rain), cirrus and cirrostratus (a 2D layer ~190 blocks above
 the cumulus in 4-block cells: wind-stretched fibres with hooks, or a milky veil with a 22-degree halo; lit early and late in the
 dawn/dusk colours), and fog (a layer filling the ground up to a top a few blocks above the valley floor around the player, a low

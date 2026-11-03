@@ -144,7 +144,7 @@ float hash12(vec2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
-// Cumulonimbus (SkyA.y): one storm at most per 16x16 cells of the map, at a random spot, the first ones to grow as SkyA.y rises.
+// Cumulonimbus (SkyA.y): one storm at most per 32x32 cells of the map, at a random spot, the first ones to grow as SkyA.y rises.
 // A tower (a core rising up to ~130 blocks, with a skirt of lower cloud around it) and, once mature, an anvil: a flat slab spreading
 // from its top, carried downwind (+x). Returns the tower's column (x bottom, y top) and the anvil's (z bottom, w top); top below
 // bottom where there's none.
@@ -152,27 +152,28 @@ vec4 stormAt(vec2 cell) {
     vec4 none = vec4(0.0, -1.0, 0.0, -1.0);
     if (SkyA.y <= 0.0) return none;
     vec2 c = mod(cell, CloudO.w);
-    vec2 sc = floor(c / 16.0);
+    vec2 sc = floor(c / 32.0);
     float s = hash12(sc + 17.0);
-    if (s > 0.5) return none;
-    float grow = clamp((SkyA.y - s) / 0.5, 0.0, 1.0);
+    if (s > 0.7) return none;
+    float grow = clamp((SkyA.y - 0.7 * s) / 0.5, 0.0, 1.0);
     if (grow <= 0.0) return none;
-    vec2 ctr = sc * 16.0 + 5.0 + 6.0 * vec2(hash12(sc + 3.1), hash12(sc + 7.7));
-    float core = 1.6 + 0.8 * hash12(sc + 11.3);
-    float r = length(c + 0.5 - ctr) + 0.6 * (hash12(c) - 0.5);
+    // (centred so the widest anvil, carried downwind, still fits in its 32 cells)
+    vec2 ctr = sc * 32.0 + 14.0 + 4.0 * vec2(hash12(sc + 3.1), hash12(sc + 7.7));
+    float core = 3.5 + 1.5 * hash12(sc + 11.3);
+    float r = length(c + 0.5 - ctr) + 0.8 * (hash12(c) - 0.5);
     float base = CloudP.y;
     float peak = base + 4.0 + floor(grow * (70.0 + 50.0 * hash12(sc + 5.9)) / 2.0) * 2.0;
     vec4 o = none;
     if (r < core) {
         o.x = base - 6.0 - floor(grow * 4.0 / 2.0) * 2.0;
         o.y = base + 4.0 + floor((peak - base - 4.0) * (1.0 - 0.35 * (r / core) * (r / core)) / 2.0) * 2.0;
-    } else if (r < core + 1.5) {
+    } else if (r < core + 3.0) {
         o.x = base - 4.0;
-        o.y = base + 4.0 + floor(grow * 26.0 * (1.0 - (r - core) / 1.5) / 2.0) * 2.0;
+        o.y = base + 4.0 + floor(grow * 30.0 * (1.0 - (r - core) / 3.0) / 2.0) * 2.0;
     }
     float mature = smoothstep(0.55, 1.0, grow);
-    float ar = core + mature * (2.5 + 2.0 * hash12(sc + 13.7));
-    float ra = length(c + 0.5 - ctr - vec2(1.5 * mature, 0.0)) + 0.6 * (hash12(c + 1.0) - 0.5);
+    float ar = core + mature * (4.0 + 3.0 * hash12(sc + 13.7));
+    float ra = length(c + 0.5 - ctr - vec2(1.5 * mature, 0.0)) + 0.8 * (hash12(c + 1.0) - 0.5);
     if (mature > 0.0 && ra < ar) {
         o.w = peak + 2.0;
         o.z = o.w - 4.0 - floor(10.0 * (1.0 - ra / ar) / 2.0) * 2.0;
